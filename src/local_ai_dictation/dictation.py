@@ -85,7 +85,7 @@ def _no_kbi_traceback(exc_type, exc, tb) -> None:
 sys.excepthook = _no_kbi_traceback
 
 
-HELP_DESC = "Local AI Dictation with selectable Whisper or Parakeet backends."
+HELP_DESC = "Local AI Dictation with selectable Whisper, Parakeet, or Willow backends."
 HELP_EPILOG = """Examples:
   local-ai-dictation dictation
   local-ai-dictation dictation --backend whisper
@@ -99,7 +99,7 @@ HELP_EPILOG = """Examples:
 def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "whisper", "willow"],
         default=None,
         help="Select the transcription backend",
     )
@@ -326,11 +326,14 @@ def _load_runtime_dependencies(backend: str, debug: bool):
             os.environ.setdefault("NEMO_LOG_LEVEL", "ERROR")
         _silence_start()
     try:
-        runtime_module = (
-            importlib.import_module("nemo.collections.asr")
-            if backend == "parakeet"
-            else importlib.import_module("faster_whisper")
-        )
+        if backend == "parakeet":
+            runtime_module = importlib.import_module("nemo.collections.asr")
+        elif backend == "whisper":
+            runtime_module = importlib.import_module("faster_whisper")
+        elif backend == "willow":
+            runtime_module = importlib.import_module("local_ai_dictation.willow")
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
         pyaudio = importlib.import_module("pyaudio")
         pyperclip = importlib.import_module("pyperclip")
         torch = importlib.import_module("torch")
@@ -606,12 +609,17 @@ def _load_model(
                     compute_type=compute_type,
                     model_id=WHISPER_MODEL_ID,
                 )
-            else:
+            elif config.backend == "parakeet":
                 model = runtime_module.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
                 use_cuda = torch_module.cuda.is_available() and not config.cpu
                 device = "cuda" if use_cuda else "cpu"
                 model.to(device)
                 model.eval()
+            elif config.backend == "willow":
+                model = runtime_module.WillowEngine.from_config(config)
+                use_cuda = False
+            else:
+                raise ValueError(f"Unsupported backend: {config.backend}")
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
     finally:
@@ -775,8 +783,10 @@ def run_dictation(args: argparse.Namespace) -> int:
 
     if config.backend == "whisper":
         print("🚀 LOCAL AI DICTATION · WHISPER DISTIL LARGE V3.5", file=status_stream)
-    else:
+    elif config.backend == "parakeet":
         print("🚀 LOCAL AI DICTATION · PARAKEET TDT 0.6B V3", file=status_stream)
+    else:
+        print("☁️ LOCAL AI DICTATION · WILLOW VOICE FRONTIER (SERVER-SELECTED)", file=status_stream)
     if torch_module.cuda.is_available():
         print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}", file=status_stream)
     print("=" * 60, file=status_stream)
@@ -785,9 +795,12 @@ def run_dictation(args: argparse.Namespace) -> int:
     print("=" * 60 + "\n", file=status_stream)
 
     if config.debug:
-        model_parameters = cast(Any, model).parameters()
         print(f"Backend: {config.backend}", file=status_stream)
-        print(f"Model device: {next(model_parameters).device}", file=status_stream)
+        if config.backend == "willow":
+            print("Model device: Willow Voice cloud", file=status_stream)
+        else:
+            model_parameters = cast(Any, model).parameters()
+            print(f"Model device: {next(model_parameters).device}", file=status_stream)
         if config.backend == "whisper":
             print(
                 f"Compute type: {getattr(model, '_parakeet_compute_type', 'unknown')}",

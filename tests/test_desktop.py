@@ -5,8 +5,15 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from local_ai_dictation.cli import main
 import local_ai_dictation.desktop as desktop
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persisted_backend(monkeypatch):
+    monkeypatch.setattr(desktop, "get_backend", lambda: "whisper")
 
 
 class _FakeCompletedProcess:

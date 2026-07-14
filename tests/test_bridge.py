@@ -183,6 +183,42 @@ def test_bridge_reuses_loaded_model_across_sessions():
     controller.shutdown()
 
 
+def test_bridge_retains_audio_only_when_explicitly_enabled(tmp_path: Path):
+    def even_pcm_recorder(config, pyaudio_module, sample_rate=16000, **kwargs):
+        return b"\x00\x00" * 200
+
+    default_dir = tmp_path / "default"
+    default_controller = DictationBridgeController(
+        runtime_loader=_runtime_loader,
+        model_loader=_make_model_loader(),
+        recorder=even_pcm_recorder,
+        transcriber=_transcriber,
+        diagnostic_audio_dir=default_dir,
+    )
+    default_controller.start_session()
+    assert default_controller._session_finished.wait(timeout=2)
+    default_controller.shutdown()
+    assert not default_dir.exists()
+
+    retained_dir = tmp_path / "retained"
+    retained_controller = DictationBridgeController(
+        runtime_loader=_runtime_loader,
+        model_loader=_make_model_loader(),
+        recorder=even_pcm_recorder,
+        transcriber=_transcriber,
+        retain_audio=True,
+        diagnostic_audio_dir=retained_dir,
+    )
+    retained_controller.start_session()
+    assert retained_controller._session_finished.wait(timeout=2)
+    retained_controller.shutdown()
+
+    retained = sorted(retained_dir.glob("*.wav"))
+    assert [path.name for path in retained] == ["last-capture-16k.wav", "last-capture-raw.wav"]
+    assert retained_dir.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in retained)
+
+
 def test_bridge_records_recording_and_clipboard_timestamps():
     clipboard = _ClipboardSuccess()
     controller = DictationBridgeController(

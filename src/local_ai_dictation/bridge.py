@@ -32,8 +32,8 @@ from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 BRIDGE_SCHEMA_VERSION = 1
 DEFAULT_E2E_TRANSCRIPT = "Local AI Dictation deterministic E2E transcript"
-LAST_CAPTURE_RAW_PATH = Path("/tmp/local-ai-dictation-last-capture-raw.wav")
-LAST_CAPTURE_MODEL_INPUT_PATH = Path("/tmp/local-ai-dictation-last-capture-16k.wav")
+DIAGNOSTIC_RAW_FILENAME = "last-capture-raw.wav"
+DIAGNOSTIC_MODEL_INPUT_FILENAME = "last-capture-16k.wav"
 
 
 def _build_status_notifier(env: Mapping[str, str]) -> Callable[[], None] | None:
@@ -103,6 +103,8 @@ class DictationBridgeController:
         e2e_start_delay_ms: int = 0,
         e2e_stop_delay_ms: int = 0,
         status_notifier: Callable[[], None] | None = None,
+        retain_audio: bool = False,
+        diagnostic_audio_dir: Path | None = None,
         runtime_loader: Callable[..., tuple[Any, Any, Any, Any]] = _load_runtime_dependencies,
         model_loader: Callable[..., tuple[Any, bool, float, float]] = _load_model,
         recorder: Callable[..., bytes | None] = record_audio_interruptible,
@@ -125,6 +127,12 @@ class DictationBridgeController:
         self._e2e_start_delay_ms = max(0, e2e_start_delay_ms)
         self._e2e_stop_delay_ms = max(0, e2e_stop_delay_ms)
         self._status_notifier = status_notifier
+        self._retain_audio = retain_audio
+        self._diagnostic_audio_dir = diagnostic_audio_dir or (
+            Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+            / "local-ai-dictation"
+            / "diagnostic-audio"
+        )
         self._runtime_loader = runtime_loader
         self._model_loader = model_loader
         self._recorder = recorder
@@ -430,8 +438,12 @@ class DictationBridgeController:
                 self._complete_cancelled_before_recording()
                 return
 
-            if len(audio_data) % 2 == 0:
-                save_audio(audio_data, str(LAST_CAPTURE_RAW_PATH), sample_rate=capture_sample_rate)
+            if self._retain_audio and len(audio_data) % 2 == 0:
+                self._save_diagnostic_audio(
+                    audio_data,
+                    self._diagnostic_audio_dir / DIAGNOSTIC_RAW_FILENAME,
+                    capture_sample_rate,
+                )
 
             with self._lock:
                 self._state = "transcribing"
@@ -444,8 +456,12 @@ class DictationBridgeController:
                 if len(audio_data) % 2 == 0
                 else audio_data
             )
-            if len(infer_audio_data) % 2 == 0:
-                save_audio(infer_audio_data, str(LAST_CAPTURE_MODEL_INPUT_PATH), sample_rate=16000)
+            if self._retain_audio and len(infer_audio_data) % 2 == 0:
+                self._save_diagnostic_audio(
+                    infer_audio_data,
+                    self._diagnostic_audio_dir / DIAGNOSTIC_MODEL_INPUT_FILENAME,
+                    16000,
+                )
             transcription, temp_path, _infer_start, _infer_end = self._transcriber(
                 config,
                 self._model,
@@ -475,6 +491,13 @@ class DictationBridgeController:
                 except Exception:
                     pass
             self._session_finished.set()
+
+    @staticmethod
+    def _save_diagnostic_audio(audio_data: bytes, path: Path, sample_rate: int) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
+        save_audio(audio_data, str(path), sample_rate=sample_rate)
+        os.chmod(path, 0o600)
 
     def shutdown(self) -> None:
         self._shutdown_requested.set()
@@ -599,6 +622,7 @@ class DictationBridgeController:
                     "vad_mode": self.vad_mode,
                     "debug": self.debug,
                     "clipboard": self.clipboard,
+                    "retain_audio": self._retain_audio,
                 },
                 "stderr_tail": list(self._stderr_tail[-20:]),
             }
@@ -630,7 +654,10 @@ class _BridgeHandler(BaseHTTPRequestHandler):
             )
             return
         if parsed.path == "/doctor":
-            report = collect_doctor_report(check_model_cache=_truthy_query(query.get("check_model_cache")))
+            report = collect_doctor_report(
+                check_model_cache=_truthy_query(query.get("check_model_cache")),
+                backend=self.controller.backend,
+            )
             self._write_json(200, asdict(report))
             return
         self._write_json(404, {"error": "not_found"})
@@ -773,6 +800,12 @@ def build_bridge_controller_from_namespace(
         e2e_start_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_START_DELAY_MS", source_env, 0),
         e2e_stop_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS", source_env, 0),
         status_notifier=_build_status_notifier(source_env),
+        retain_audio=_env_truthy("LOCAL_AI_DICTATION_RETAIN_AUDIO", source_env),
+        diagnostic_audio_dir=(
+            Path(source_env.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+            / "local-ai-dictation"
+            / "diagnostic-audio"
+        ),
     )
 
 

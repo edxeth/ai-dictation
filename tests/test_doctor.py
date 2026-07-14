@@ -17,6 +17,7 @@ _DEFAULT_WSL = {
 
 def _stub_common(monkeypatch):
     monkeypatch.setattr("local_ai_dictation.doctor._detect_wsl", lambda: dict(_DEFAULT_WSL))
+    monkeypatch.setattr("local_ai_dictation.doctor.get_backend", lambda: "parakeet")
 
 
 def _stub_ready_runtime(monkeypatch):
@@ -59,6 +60,7 @@ def test_collect_doctor_report_ok_when_audio_and_runtime_are_ready(monkeypatch):
         "checked": False,
         "cache_present": None,
         "model_id": MODEL_ID,
+        "backend": "parakeet",
     }
     assert report.status["overall"] == "ok"
     assert report.status["exit_code"] == 0
@@ -81,9 +83,23 @@ def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
         "checked": False,
         "cache_present": None,
         "model_id": MODEL_ID,
+        "backend": "parakeet",
     }
     assert report.status["overall"] == "ok"
 
+
+
+def test_collect_doctor_report_targets_willow_backend(monkeypatch):
+    _stub_ready_runtime(monkeypatch)
+
+    report = collect_doctor_report(backend="willow")
+
+    assert report.model == {
+        "checked": False,
+        "cache_present": None,
+        "model_id": "willow/frontier-auto",
+        "backend": "willow",
+    }
 
 
 def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_exist(monkeypatch):
@@ -183,6 +199,7 @@ def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
         "import_ready": True,
         "import_error": None,
         "detail": "Local cache and model imports look ready",
+        "backend": "parakeet",
     }
     assert report.status["overall"] == "ok"
     assert report.status["exit_code"] == 0
@@ -241,6 +258,7 @@ def test_doctor_command_emits_json_schema(monkeypatch, capsys):
         "checked": False,
         "cache_present": None,
         "model_id": MODEL_ID,
+        "backend": "parakeet",
     }
     assert payload["status"] == {
         "overall": "ok",
@@ -277,6 +295,7 @@ def test_doctor_command_emits_model_check_json(monkeypatch, capsys):
         "import_ready": True,
         "import_error": None,
         "detail": "Local cache and model imports look ready",
+        "backend": "parakeet",
     }
     assert payload["status"] == {
         "overall": "ok",

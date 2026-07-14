@@ -105,7 +105,7 @@ def _restart_local_bridge(host: str, port: int) -> None:
 def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "whisper", "willow"],
         default=None,
         help="Transcription backend for bridge-controlled dictation sessions.",
     )
@@ -215,7 +215,13 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--check-model-cache",
         action="store_true",
-        help="Check local model cache/import readiness without loading or downloading the model.",
+        help="Check model or cloud-session readiness without loading or downloading a local model.",
+    )
+    doctor_parser.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper", "willow"],
+        default=None,
+        help="Backend readiness to diagnose (defaults to the persisted selection).",
     )
     doctor_parser.set_defaults(handler=_run_doctor_namespace)
 
@@ -234,6 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="Number of warm transcription runs to execute.",
+    )
+    benchmark_parser.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper", "willow"],
+        default="parakeet",
+        help="Transcription backend to benchmark.",
     )
     benchmark_parser.add_argument(
         "--json",
@@ -298,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
     backend_parser.add_argument(
         "backend_name",
         nargs="?",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "whisper", "willow"],
         help="Backend to persist when using the set action.",
     )
     backend_parser.add_argument(
@@ -325,6 +337,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backend_parser.set_defaults(handler=_run_backend_namespace)
 
+    willow_session_parser = subparsers.add_parser(
+        "willow-session",
+        help="Import or inspect the private Willow cloud session.",
+        description="Import or inspect the private Willow cloud session.",
+    )
+    willow_session_parser.add_argument(
+        "action",
+        choices=["status", "import"],
+        help="Session action.",
+    )
+    willow_session_parser.add_argument(
+        "source_path",
+        nargs="?",
+        help="Official Willow Supabase session JSON file used by the import action.",
+    )
+    willow_session_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON without credential values.",
+    )
+    willow_session_parser.set_defaults(handler=_run_willow_session_namespace)
+
     gui_parser = subparsers.add_parser(
         "gui",
         help="Run the Electrobun desktop app on the current platform.",
@@ -332,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper"],
+        choices=["parakeet", "whisper", "willow"],
         default=None,
         help="Backend name used when generating the default bridge startup command.",
     )
@@ -628,7 +663,10 @@ def _run_devices_namespace(namespace: argparse.Namespace) -> int:
 
 
 def _run_doctor_namespace(namespace: argparse.Namespace) -> int:
-    report = collect_doctor_report(check_model_cache=bool(namespace.check_model_cache))
+    report = collect_doctor_report(
+        check_model_cache=bool(namespace.check_model_cache),
+        backend=getattr(namespace, "backend", None),
+    )
 
     if namespace.json_output:
         print(json.dumps(asdict(report)))
@@ -642,6 +680,7 @@ def _run_benchmark_namespace(namespace: argparse.Namespace) -> int:
     return run_benchmark_command(
         namespace.fixture,
         runs=namespace.runs,
+        backend=namespace.backend,
         cpu=bool(namespace.cpu),
         json_output=bool(namespace.json_output),
         check_expected=bool(namespace.check_expected),
@@ -672,6 +711,34 @@ def _run_backend_namespace(namespace: argparse.Namespace) -> int:
         print(json.dumps(payload))
     else:
         print(payload["backend"])
+    return 0
+
+
+def _run_willow_session_namespace(namespace: argparse.Namespace) -> int:
+    from local_ai_dictation.willow import import_session_file, load_session, resolve_session_path, session_path
+
+    action = str(getattr(namespace, "action", "status"))
+    if action == "import":
+        source_path = getattr(namespace, "source_path", None)
+        if not source_path:
+            raise SystemExit("willow-session import requires SOURCE_PATH")
+        path = import_session_file(Path(str(source_path)).expanduser())
+        session = load_session(path=path)
+    else:
+        path = resolve_session_path()
+        session = load_session()
+
+    payload = {
+        "ready": bool(session.access_token and session.refresh_token),
+        "session_path": str(session_path()),
+        "source_path": str(path),
+        "expires_at": session.expires_at,
+        "refreshable": bool(session.refresh_token),
+    }
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+    else:
+        print(f"Willow session ready at {payload['session_path']}")
     return 0
 
 

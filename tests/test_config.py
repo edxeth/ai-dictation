@@ -24,6 +24,16 @@ def test_defaults_apply_when_no_overrides(tmp_path):
     assert config.debug is False
 
 
+def test_willow_backend_is_accepted_from_environment(tmp_path):
+    config = resolve_config(
+        _parse([]),
+        env={"LOCAL_AI_DICTATION_BACKEND": "willow"},
+        config_path=tmp_path / "missing.toml",
+    )
+
+    assert config.backend == "willow"
+
+
 def test_config_file_overrides_defaults(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

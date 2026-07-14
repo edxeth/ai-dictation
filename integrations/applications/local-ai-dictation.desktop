@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Local AI Dictation
+GenericName=Speech-to-text dictation
+Comment=Control Whisper, Parakeet, and Willow Voice dictation
+Exec=local-ai-dictation gui
+TryExec=local-ai-dictation
+Icon=audio-input-microphone
+Terminal=false
+StartupNotify=true
+StartupWMClass=local-ai-dictation-desktop
+Categories=Utility;Accessibility;
+Keywords=dictation;speech;transcription;whisper;parakeet;willow;

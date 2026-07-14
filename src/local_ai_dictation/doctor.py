@@ -11,6 +11,7 @@ import shutil
 from typing import Any, Mapping, Sequence
 
 from local_ai_dictation.audio import list_input_devices, probe_audio_backend
+from local_ai_dictation.backend_state import get_backend
 from local_ai_dictation.errors import (
     AUDIO_BACKEND_UNREACHABLE,
     AUDIO_NO_INPUT_DEVICE,
@@ -138,15 +139,28 @@ def _collect_cuda_status() -> dict[str, Any]:
     }
 
 
-def _collect_model_status(check_model_cache_enabled: bool) -> dict[str, Any]:
+def _collect_model_status(check_model_cache_enabled: bool, backend: str) -> dict[str, Any]:
+    if backend == "whisper":
+        from local_ai_dictation.whisper import WHISPER_MODEL_ID, check_model_cache as selected_check
+
+        model_id = WHISPER_MODEL_ID
+    elif backend == "willow":
+        from local_ai_dictation.willow import check_model_cache as selected_check
+
+        model_id = "willow/frontier-auto"
+    else:
+        selected_check = check_model_cache
+        model_id = MODEL_ID
+
     if not check_model_cache_enabled:
         return {
             "checked": False,
             "cache_present": None,
-            "model_id": MODEL_ID,
+            "model_id": model_id,
+            "backend": backend,
         }
 
-    return check_model_cache()
+    return {**selected_check(), "backend": backend}
 
 
 def _build_issues(
@@ -157,6 +171,7 @@ def _build_issues(
     cuda: Mapping[str, Any],
     model: Mapping[str, Any],
     device_error: Exception | None,
+    backend: str,
 ) -> list[DoctorIssue]:
     issues: list[DoctorIssue] = []
 
@@ -191,7 +206,7 @@ def _build_issues(
             )
         )
 
-    if not bool(cuda.get("available")):
+    if backend != "willow" and not bool(cuda.get("available")):
         issues.append(
             DoctorIssue(
                 code=CUDA_UNAVAILABLE,
@@ -208,7 +223,11 @@ def _build_issues(
                 code=MODEL_IMPORT_FAILED,
                 severity="fail",
                 message=f"Model imports are not ready: {detail}",
-                remediation="Install the required runtime dependencies and confirm `import nemo.collections.asr` works without loading the model.",
+                remediation=(
+                    "Import a session with `local-ai-dictation willow-session import SOURCE_PATH` or provide WILLOW_ACCESS_TOKEN."
+                    if backend == "willow"
+                    else "Install the required runtime dependencies for the selected local model."
+                ),
             )
         )
 
@@ -244,7 +263,7 @@ def _status_from_issues(issues: Sequence[DoctorIssue]) -> dict[str, Any]:
     }
 
 
-def collect_doctor_report(check_model_cache: bool = False) -> DoctorReport:
+def collect_doctor_report(check_model_cache: bool = False, *, backend: str | None = None) -> DoctorReport:
     env = _collect_env()
     wsl = _detect_wsl()
     pulse = probe_audio_backend()
@@ -258,7 +277,8 @@ def collect_doctor_report(check_model_cache: bool = False) -> DoctorReport:
 
     clipboard = _collect_clipboard_status()
     cuda = _collect_cuda_status()
-    model = _collect_model_status(check_model_cache)
+    selected_backend = get_backend() if backend in {None, ""} else str(backend)
+    model = _collect_model_status(check_model_cache, selected_backend)
     issues = _build_issues(
         pulse=pulse,
         audio_devices=audio_devices,
@@ -266,6 +286,7 @@ def collect_doctor_report(check_model_cache: bool = False) -> DoctorReport:
         cuda=cuda,
         model=model,
         device_error=device_error,
+        backend=selected_backend,
     )
 
     return DoctorReport(

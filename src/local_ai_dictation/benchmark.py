@@ -16,7 +16,7 @@ import wave
 
 from local_ai_dictation.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
 from local_ai_dictation.model import load_engine, transcribe_wav
-from local_ai_dictation.types import BenchmarkReport, DictationConfig
+from local_ai_dictation.types import BenchmarkReport, DictationConfig, ModelBackend
 import unicodedata
 
 
@@ -134,6 +134,7 @@ def benchmark_fixture(
     fixture_path: str | Path,
     *,
     runs: int,
+    backend: ModelBackend = "parakeet",
     cpu: bool = False,
     check_expected: bool = False,
     perf_counter=time.perf_counter,
@@ -146,13 +147,21 @@ def benchmark_fixture(
     fixture = _validate_fixture_path(fixture_path)
     expected_text = load_expected_transcript(fixture, required=check_expected)
 
-    if load_engine_fn is None:
-        load_engine_fn = load_engine
-    if transcribe_wav_fn is None:
-        transcribe_wav_fn = transcribe_wav
+    if load_engine_fn is None or transcribe_wav_fn is None:
+        if backend == "whisper":
+            from local_ai_dictation.whisper import load_engine as selected_load_engine
+            from local_ai_dictation.whisper import transcribe_wav as selected_transcribe_wav
+        elif backend == "willow":
+            from local_ai_dictation.willow import load_engine as selected_load_engine
+            from local_ai_dictation.willow import transcribe_wav as selected_transcribe_wav
+        else:
+            selected_load_engine = load_engine
+            selected_transcribe_wav = transcribe_wav
+        load_engine_fn = load_engine_fn or selected_load_engine
+        transcribe_wav_fn = transcribe_wav_fn or selected_transcribe_wav
 
     load_start = perf_counter()
-    engine = load_engine_fn(DictationConfig(cpu=cpu))
+    engine = load_engine_fn(DictationConfig(backend=backend, cpu=cpu))
     load_ms = (perf_counter() - load_start) * 1000.0
 
     run_ms: list[float] = []
@@ -195,6 +204,7 @@ def run_benchmark_command(
     fixture_path: str,
     *,
     runs: int,
+    backend: ModelBackend = "parakeet",
     cpu: bool = False,
     json_output: bool = False,
     check_expected: bool = False,
@@ -204,6 +214,7 @@ def run_benchmark_command(
             report = benchmark_fixture(
                 fixture_path,
                 runs=runs,
+                backend=backend,
                 cpu=cpu,
                 check_expected=check_expected,
             )

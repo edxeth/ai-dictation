@@ -25,6 +25,9 @@ def test_backend_state_set_and_toggle_round_trip(tmp_path: Path, monkeypatch):
 
     assert toggle_backend() == "parakeet"
     assert get_backend() == "parakeet"
+    assert toggle_backend() == "willow"
+    assert get_backend() == "willow"
+    assert toggle_backend() == "whisper"
 
 
 def test_backend_cli_toggle_and_get_json(tmp_path: Path, monkeypatch, capsys):
@@ -37,6 +40,14 @@ def test_backend_cli_toggle_and_get_json(tmp_path: Path, monkeypatch, capsys):
 
     assert main(["backend", "get"]) == 0
     assert capsys.readouterr().out.strip() == "parakeet"
+
+
+def test_backend_cli_accepts_willow(tmp_path: Path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    assert main(["backend", "set", "willow"]) == 0
+    assert capsys.readouterr().out.strip() == "willow"
+    assert get_backend() == "willow"
 
 
 def test_bridge_start_command_uses_persisted_backend_when_not_overridden(tmp_path: Path, monkeypatch):

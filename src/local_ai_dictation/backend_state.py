@@ -9,7 +9,8 @@ from typing import Any, Mapping
 
 
 DEFAULT_BACKEND = "whisper"
-_VALID_BACKENDS = {"parakeet", "whisper"}
+BACKEND_ORDER = ("whisper", "parakeet", "willow")
+_VALID_BACKENDS = set(BACKEND_ORDER)
 
 
 def normalize_backend(value: str | None) -> str:
@@ -51,7 +52,8 @@ def set_backend(backend: str, env: Mapping[str, str] | None = None) -> str:
 
 def toggle_backend(env: Mapping[str, str] | None = None) -> str:
     current = get_backend(env)
-    target = "whisper" if current == "parakeet" else "parakeet"
+    current_index = BACKEND_ORDER.index(current)
+    target = BACKEND_ORDER[(current_index + 1) % len(BACKEND_ORDER)]
     return set_backend(target, env)
 
 

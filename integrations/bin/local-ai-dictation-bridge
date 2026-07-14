@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/local-ai-dictation"
+mkdir -p "$STATE_DIR"
+
+CLI="${LOCAL_AI_DICTATION_CLI:-$HOME/.local/bin/local-ai-dictation}"
+
+exec 9>"$STATE_DIR/bridge.lock"
+if ! flock -n 9; then
+  exit 0
+fi
+
+if curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1; then
+  exit 0
+fi
+
+export LOCAL_AI_DICTATION_WAYBAR_SIGNAL="${LOCAL_AI_DICTATION_WAYBAR_SIGNAL:-8}"
+
+exec "$CLI" bridge \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --log-file "$STATE_DIR/bridge.debug.log" \
+  >>"$STATE_DIR/bridge.stdout.log" \
+  2>>"$STATE_DIR/bridge.stderr.log"

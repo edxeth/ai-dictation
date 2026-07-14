@@ -30,7 +30,7 @@ type SessionPayload = {
   stderr_tail: string[];
 };
 
-type BackendName = "whisper" | "parakeet";
+type BackendName = "whisper" | "parakeet" | "willow";
 
 type BridgeViewState = {
   bridgeUrl: string;
@@ -211,7 +211,15 @@ function escapeHtml(value: string): string {
 }
 
 function renderBackendLabel(backend: BackendName): string {
-  return backend === "whisper" ? "Whisper" : "Parakeet";
+  if (backend === "parakeet") return "Parakeet";
+  if (backend === "willow") return "Willow Voice";
+  return "Whisper";
+}
+
+function nextBackend(backend: BackendName): BackendName {
+  if (backend === "whisper") return "parakeet";
+  if (backend === "parakeet") return "willow";
+  return "whisper";
 }
 
 function renderHistoryActionIcon(copied: boolean): string {
@@ -413,7 +421,7 @@ function buildStateSignature(viewState: BridgeViewState): string {
 
 
 function normalizeBackendName(value: unknown): BackendName {
-  return value === "parakeet" ? "parakeet" : "whisper";
+  return value === "parakeet" || value === "willow" ? value : "whisper";
 }
 
 function buildViewStateFromHealthPayload(payload: BridgeHealthPayload): BridgeViewState {
@@ -556,7 +564,7 @@ function renderState(viewState: BridgeViewState) {
 
   hotkeyValue.innerHTML = renderHotkey(viewState.hotkey);
   modelValue.textContent = renderBackendLabel(runningBackend);
-  switchModelButton.textContent = runningBackend === "whisper" ? "Use Parakeet" : "Use Whisper";
+  switchModelButton.textContent = `Use ${renderBackendLabel(nextBackend(runningBackend))}`;
   bridgeUrl.textContent = viewState.bridgeUrl;
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(nextFilteredHistory);
@@ -605,9 +613,11 @@ function renderState(viewState: BridgeViewState) {
         ? viewState.hotkeyRegistered
           ? "Model ready. Press the button or the hotkey to begin."
           : "Model ready. Press the button or your configured hotkey to begin."
-        : viewState.hotkeyRegistered
-          ? "Ready. First recording will load the model; after that it stays warm."
-          : "Ready. First recording will load the model; after that it stays warm. You can also use your configured hotkey.";
+        : runningBackend === "willow"
+          ? "Ready. The first recording connects securely to Willow Voice."
+          : viewState.hotkeyRegistered
+            ? "Ready. First recording will load the model; after that it stays warm."
+            : "Ready. First recording will load the model; after that it stays warm. You can also use your configured hotkey.";
     }
   }
 

@@ -28,7 +28,7 @@ type SessionPayload = {
   stderr_tail: string[];
 };
 
-type BackendName = "whisper" | "parakeet";
+type BackendName = "whisper" | "parakeet" | "willow";
 
 type BridgeViewState = {
   bridgeUrl: string;
@@ -214,7 +214,7 @@ const nativeCuePlayerCommands = [
 ] as const;
 
 function normalizeBackend(value: string | null | undefined): BackendName {
-  return value === "parakeet" ? "parakeet" : "whisper";
+  return value === "parakeet" || value === "willow" ? value : "whisper";
 }
 
 function readPreferredBackend(): BackendName {
@@ -233,7 +233,9 @@ function writePreferredBackend(backend: BackendName): BackendName {
 }
 
 function togglePreferredBackend(): BackendName {
-  return writePreferredBackend(readPreferredBackend() === "whisper" ? "parakeet" : "whisper");
+  const order: BackendName[] = ["whisper", "parakeet", "willow"];
+  const currentIndex = order.indexOf(readPreferredBackend());
+  return writePreferredBackend(order[(currentIndex + 1) % order.length]);
 }
 
 function localCliPath(): string {
@@ -277,7 +279,7 @@ function buildBridgeStartCommand(backend: BackendName): string {
   } catch {
     // keep defaults
   }
-  return `local-ai-dictation bridge --host ${host} --port ${port}${backend === "whisper" ? " --backend whisper" : " --backend parakeet"}`;
+  return `local-ai-dictation bridge --host ${host} --port ${port} --backend ${backend}`;
 }
 
 function resolveSessionCueAssetPath(kind: SessionCueKind): string | null {

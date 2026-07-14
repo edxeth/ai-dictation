@@ -57,7 +57,7 @@ def _parse_format(value: Any) -> TranscriptFormat:
 
 def _parse_backend(value: Any) -> str:
     text = str(value).strip().lower()
-    if text not in {"parakeet", "whisper"}:
+    if text not in {"parakeet", "whisper", "willow"}:
         raise ValueError(f"Invalid backend: {value!r}")
     return text
 
