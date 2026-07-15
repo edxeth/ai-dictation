@@ -10,7 +10,9 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import queue
 import tempfile
+import threading
 import time
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlencode
@@ -30,6 +32,8 @@ SUPABASE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=refres
 SUPABASE_PUBLIC_KEY = "sb_publishable_zK_SHENTsKCbRZP0-1mkeA_HUlYW4wM"
 DEFAULT_SESSION_PATH = Path.home() / ".local" / "state" / "local-ai-dictation" / "willow-session.json"
 PCM_PACKET_BYTES = 1024
+AUDIO_QUEUE_MAX_CHUNKS = 512
+AUDIO_QUEUE_PUT_TIMEOUT = 1.0
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 _RESULT_KEYS = {"dictation_result", "result_actions"}
 _TEXT_ACTION_TYPES = {"paste", "save"}
@@ -362,6 +366,146 @@ def _extract_transcript(envelope: Mapping[str, Any]) -> str | None:
     return "".join(texts) if texts else None
 
 
+_STREAM_FINISH = object()
+
+
+class WillowStreamingSession:
+    """Streams realtime PCM while capture is still in progress."""
+
+    def __init__(self, engine: "WillowEngine") -> None:
+        self._engine = engine
+        self._audio_queue: queue.Queue[object] = queue.Queue(maxsize=AUDIO_QUEUE_MAX_CHUNKS)
+        self._cancelled = threading.Event()
+        self._ready = threading.Event()
+        self._finished = threading.Event()
+        self._state_lock = threading.Lock()
+        self._socket_lock = threading.Lock()
+        self._socket: Any | None = None
+        self._finish_requested = False
+        self._transcript: str | None = None
+        self._error: ModelError | None = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def wait_ready(self) -> None:
+        deadline = time.monotonic() + self._engine._connect_timeout + 1.0
+        while not self._ready.is_set():
+            if self._cancelled.is_set():
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+            if self._finished.is_set():
+                self._raise_if_failed()
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session ended before it was ready")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.cancel()
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out preparing Willow streaming session")
+            self._ready.wait(timeout=min(0.05, remaining))
+
+    def send_audio(self, pcm: bytes) -> None:
+        if not pcm:
+            return
+        with self._state_lock:
+            if self._finish_requested:
+                self._raise_if_failed()
+                raise RuntimeError("Cannot send Willow audio after finish")
+        self._enqueue(bytes(pcm), deadline=time.monotonic() + AUDIO_QUEUE_PUT_TIMEOUT)
+
+    def finish(self) -> str:
+        deadline = time.monotonic() + self._engine._connect_timeout + self._engine._result_timeout + 2.0
+        enqueue_finish = False
+        with self._state_lock:
+            if not self._finish_requested:
+                self._finish_requested = True
+                enqueue_finish = True
+        if enqueue_finish:
+            self._enqueue(_STREAM_FINISH, deadline=deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._finished.wait(timeout=remaining):
+            self.cancel()
+            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out waiting for Willow streaming transcription")
+        self._raise_if_failed()
+        return self._transcript or ""
+
+    def cancel(self) -> None:
+        with self._state_lock:
+            self._finish_requested = True
+        self._cancelled.set()
+        try:
+            self._audio_queue.put_nowait(_STREAM_FINISH)
+        except queue.Full:
+            pass
+        with self._socket_lock:
+            socket = self._socket
+        if socket is None:
+            return
+        try:
+            socket.close()
+        except Exception:
+            pass
+        self._finished.wait(timeout=1.0)
+
+    def _raise_if_failed(self) -> None:
+        if self._error is not None:
+            raise self._error
+
+    def _enqueue(self, item: object, *, deadline: float) -> None:
+        while not self._finished.is_set():
+            if self._cancelled.is_set():
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out queueing Willow audio")
+            try:
+                self._audio_queue.put(item, timeout=min(0.1, remaining))
+                return
+            except queue.Full:
+                continue
+        self._raise_if_failed()
+        raise RuntimeError("Willow streaming session ended before audio could be sent")
+
+    def _run(self) -> None:
+        try:
+            self._engine._ensure_fresh_session()
+            socket = self._engine._open_socket()
+            with self._socket_lock:
+                self._socket = socket
+            with socket:
+                if self._cancelled.is_set():
+                    return
+                protocol = WillowProtocol()
+                self._engine._initialize_realtime_socket(socket, protocol)
+                self._ready.set()
+                pending = bytearray()
+                while not self._cancelled.is_set():
+                    item = self._audio_queue.get()
+                    if item is _STREAM_FINISH:
+                        break
+                    pending.extend(item)
+                    while len(pending) >= PCM_PACKET_BYTES:
+                        packet = bytes(pending[:PCM_PACKET_BYTES])
+                        del pending[:PCM_PACKET_BYTES]
+                        self._engine._send(socket, protocol, "audio_packet", packet)
+
+                if self._cancelled.is_set():
+                    return
+                if len(pending) % 2:
+                    raise ValueError("Willow PCM stream ended with an incomplete sample")
+                if pending:
+                    self._engine._send(socket, protocol, "audio_packet", bytes(pending))
+                self._engine._send(socket, protocol, "flush_packet", {})
+                self._transcript = self._engine._wait_for_result(socket, protocol)
+        except ModelError as exc:
+            if not self._cancelled.is_set():
+                self._error = exc
+        except Exception as exc:
+            if not self._cancelled.is_set():
+                self._error = ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow transcription failed: {exc}")
+        finally:
+            with self._socket_lock:
+                self._socket = None
+            self._finished.set()
+
+
 class WillowEngine:
     def __init__(
         self,
@@ -425,41 +569,40 @@ class WillowEngine:
         return self.transcribe_pcm(pcm)
 
     def transcribe_pcm(self, pcm: bytes) -> str:
-        self._ensure_fresh_session()
+        session = self.start_streaming()
+        session.send_audio(pcm)
+        return session.finish()
+
+    def start_streaming(self) -> WillowStreamingSession:
+        return WillowStreamingSession(self)
+
+    def _open_socket(self):
         query = {"interactionID": str(uuid4()), "client": "linux", "protocol_version": "3"}
         if self._user_id:
             query["userID"] = self._user_id
         endpoint = f"{self._endpoint}{'&' if '?' in self._endpoint else '?'}{urlencode(query)}"
-        protocol = WillowProtocol()
-        try:
-            with connect(
-                endpoint,
-                additional_headers={"Authorization": f"Bearer {self._access_token}"},
-                open_timeout=self._connect_timeout,
-                close_timeout=0.5,
-            ) as socket:
-                self._send(socket, protocol, "health_packet", {})
-                self._wait_for(socket, protocol, "health_packet", self._connect_timeout)
-                for key, data in (
-                    ("selected_languages", []),
-                    ("glossary", []),
-                    ("type", {"type": "realtime"}),
-                    ("llm_type", "normal"),
-                    ("user_preferences", {"style_matching": {}, "scribe_style_matching": {}}),
-                    ("assistant_enabled", False),
-                    ("force_assistant", False),
-                    ("smart_insertion_enabled", False),
-                    ("press_enter_enabled", False),
-                ):
-                    self._send(socket, protocol, key, data)
-                for offset in range(0, len(pcm), PCM_PACKET_BYTES):
-                    self._send(socket, protocol, "audio_packet", pcm[offset : offset + PCM_PACKET_BYTES])
-                self._send(socket, protocol, "flush_packet", {})
-                return self._wait_for_result(socket, protocol)
-        except ModelError:
-            raise
-        except Exception as exc:
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow transcription failed: {exc}") from exc
+        return connect(
+            endpoint,
+            additional_headers={"Authorization": f"Bearer {self._access_token}"},
+            open_timeout=self._connect_timeout,
+            close_timeout=0.5,
+        )
+
+    def _initialize_realtime_socket(self, socket: Any, protocol: WillowProtocol) -> None:
+        self._send(socket, protocol, "health_packet", {})
+        self._wait_for(socket, protocol, "health_packet", self._connect_timeout)
+        for key, data in (
+            ("selected_languages", []),
+            ("glossary", []),
+            ("type", {"type": "realtime"}),
+            ("llm_type", "normal"),
+            ("user_preferences", {"style_matching": {}, "scribe_style_matching": {}}),
+            ("assistant_enabled", False),
+            ("force_assistant", False),
+            ("smart_insertion_enabled", False),
+            ("press_enter_enabled", False),
+        ):
+            self._send(socket, protocol, key, data)
 
     def _ensure_fresh_session(self) -> None:
         if self._expires_at is None or self._expires_at > time.time() + 60:

@@ -254,7 +254,7 @@ def run_bridge_toggle_command(namespace: Any) -> int:
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urlopen(request, timeout=5.0) as response:
+        with urlopen(request, timeout=30.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace").strip()

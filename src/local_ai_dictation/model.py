@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
+import tempfile
 from typing import Any, Mapping
+import wave
 
 from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
 from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
@@ -138,6 +140,22 @@ def load_engine(config: DictationConfig) -> TranscriptionEngine:
 
 def warmup(engine: TranscriptionEngine) -> None:
     engine.eval()
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+            temporary_path = handle.name
+        with wave.open(temporary_path, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x00\x00" * 8000)
+        engine.transcribe([temporary_path], verbose=False)
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 
 def transcribe_wav(engine: TranscriptionEngine, path: str | Path) -> TranscriptionResult:

@@ -156,6 +156,7 @@ state, icon, text, tooltip = classify(payload)
 previous_state = read_last_state()
 previous_completed_at = read_last_completed_at()
 completed_at = None
+paste_dispatched_at = None
 transcript_text = ""
 if isinstance(payload, dict):
     session = payload.get("session")
@@ -163,6 +164,7 @@ if isinstance(payload, dict):
         raw_completed_at = session.get("last_completed_at")
         if raw_completed_at is not None:
             completed_at = str(raw_completed_at)
+        paste_dispatched_at = session.get("paste_dispatched_at")
         last_transcript = session.get("last_transcript")
         if isinstance(last_transcript, dict):
             transcript_text = str(last_transcript.get("transcript") or "").strip()
@@ -176,7 +178,7 @@ if previous_state != state:
 
 if completed_at is not None and completed_at != previous_completed_at:
     write_last_completed_at(completed_at)
-    if previous_completed_at is not None and transcript_text:
+    if previous_completed_at is not None and transcript_text and paste_dispatched_at is None:
         send_paste_shortcut()
 
 print(json.dumps({"text": icon, "alt": text, "tooltip": tooltip, "class": state}))

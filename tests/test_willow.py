@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
+import time
 import wave
 
 import msgpack
@@ -211,6 +212,168 @@ def test_willow_protocol_reassembles_chunked_result():
     assert received is not None
     assert received["d"]["key"] == "dictation_result"
     assert received["d"]["data"]["actions"][0]["text"] == "Mock transcript"
+
+
+def test_streaming_session_waits_for_health_handshake():
+    health_received = threading.Event()
+    allow_health = threading.Event()
+
+    def handler(socket):
+        incoming = WillowProtocol()
+        outgoing = WillowProtocol()
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None or envelope["d"]["key"] != "health_packet":
+                continue
+            health_received.set()
+            assert allow_health.wait(timeout=2)
+            socket.send(outgoing.encode("health_packet", {"ok": True})[0])
+            try:
+                while socket.recv():
+                    pass
+            except Exception:
+                return
+
+    with serve(handler, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.socket.getsockname()[1]
+        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+        session = engine.start_streaming()
+        ready = threading.Event()
+        waiter = threading.Thread(target=lambda: (session.wait_ready(), ready.set()), daemon=True)
+        waiter.start()
+
+        assert health_received.wait(timeout=2)
+        assert ready.is_set() is False
+        allow_health.set()
+        assert ready.wait(timeout=2)
+
+        session.cancel()
+        waiter.join(timeout=1)
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_streaming_session_cancel_unblocks_readiness_during_connect(monkeypatch):
+    open_started = threading.Event()
+    release_open = threading.Event()
+    engine = WillowEngine(access_token="test-token", connect_timeout=5.0, result_timeout=1.0)
+
+    def blocked_open():
+        open_started.set()
+        assert release_open.wait(timeout=2)
+        raise RuntimeError("cancelled connection")
+
+    monkeypatch.setattr(engine, "_open_socket", blocked_open)
+    session = engine.start_streaming()
+    assert open_started.wait(timeout=1)
+    ready_errors: list[Exception] = []
+
+    def wait_ready():
+        try:
+            session.wait_ready()
+        except Exception as exc:
+            ready_errors.append(exc)
+
+    waiter = threading.Thread(target=wait_ready, daemon=True)
+    waiter.start()
+    cancel_started = time.perf_counter()
+    session.cancel()
+    cancel_elapsed = time.perf_counter() - cancel_started
+    waiter.join(timeout=0.5)
+    release_open.set()
+
+    assert cancel_elapsed < 0.2
+    assert waiter.is_alive() is False
+    assert ready_errors
+
+
+def test_streaming_session_finish_unblocks_when_full_queue_is_cancelled(monkeypatch):
+    open_started = threading.Event()
+    release_open = threading.Event()
+    engine = WillowEngine(access_token="test-token", connect_timeout=1.0, result_timeout=1.0)
+
+    def blocked_open():
+        open_started.set()
+        assert release_open.wait(timeout=3)
+        raise RuntimeError("cancelled connection")
+
+    monkeypatch.setattr(engine, "_open_socket", blocked_open)
+    session = engine.start_streaming()
+    assert open_started.wait(timeout=1)
+    for _ in range(willow_module.AUDIO_QUEUE_MAX_CHUNKS):
+        session.send_audio(b"\x00\x00")
+
+    finish_errors: list[Exception] = []
+
+    def finish():
+        try:
+            session.finish()
+        except Exception as exc:
+            finish_errors.append(exc)
+
+    finisher = threading.Thread(target=finish, daemon=True)
+    finisher.start()
+    time.sleep(0.15)
+    session.cancel()
+
+    finisher.join(timeout=1)
+    release_open.set()
+
+    assert finisher.is_alive() is False
+    assert finish_errors
+
+
+def test_streaming_session_sends_audio_before_flush():
+    pcm = bytes(range(256)) * 8
+    audio_received = threading.Event()
+    flush_received = threading.Event()
+    received_audio: list[bytes] = []
+
+    def handler(socket):
+        incoming = WillowProtocol()
+        outgoing = WillowProtocol()
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None:
+                continue
+            key = envelope["d"]["key"]
+            if key == "health_packet":
+                socket.send(outgoing.encode("health_packet", {"ok": True})[0])
+            elif key == "audio_packet":
+                received_audio.append(envelope["d"]["data"])
+                audio_received.set()
+            elif key == "flush_packet":
+                flush_received.set()
+                socket.send(
+                    outgoing.encode(
+                        "dictation_result",
+                        {"actions": [{"type": "paste", "text": "Realtime transcript"}]},
+                    )[0]
+                )
+                return
+
+    with serve(handler, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.socket.getsockname()[1]
+        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+
+        session = engine.start_streaming()
+        session.wait_ready()
+        session.send_audio(pcm[:1024])
+
+        assert audio_received.wait(timeout=2)
+        assert flush_received.is_set() is False
+
+        session.send_audio(pcm[1024:])
+        result = session.finish()
+        server.shutdown()
+        thread.join(timeout=2)
+
+    assert result == "Realtime transcript"
+    assert b"".join(received_audio) == pcm
 
 
 def test_transcribe_wav_sends_willow_handshake_and_recording(tmp_path: Path):

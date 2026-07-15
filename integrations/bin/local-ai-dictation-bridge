@@ -16,6 +16,7 @@ if curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1; then
 fi
 
 export LOCAL_AI_DICTATION_WAYBAR_SIGNAL="${LOCAL_AI_DICTATION_WAYBAR_SIGNAL:-8}"
+export LOCAL_AI_DICTATION_HYPRLAND_PASTE="${LOCAL_AI_DICTATION_HYPRLAND_PASTE:-1}"
 
 exec "$CLI" bridge \
   --host 127.0.0.1 \

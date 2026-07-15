@@ -45,12 +45,17 @@ local-ai-dictation benchmark --backend willow --fixture recording.wav --runs 1 -
 - Factory default
 - Lower local VRAM pressure than Parakeet
 - Model: `deepdml/faster-distil-whisper-large-v3.5`
+- The persistent bridge performs a real inference warmup, then overlaps long
+  recordings with timestamped rolling windows so stop only finalizes the tail
 
 ### Parakeet
 
 - Local NVIDIA NeMo inference
 - Higher model-load VRAM spike
 - Model: `nvidia/parakeet-tdt-0.6b-v3`
+- The persistent bridge performs a real inference warmup; this offline
+  checkpoint stays on batch inference because cache-aware streaming needs
+  multi-second context
 
 ### Willow Voice cloud
 
@@ -206,6 +211,7 @@ Supported environment variables:
 - `LOCAL_AI_DICTATION_DEBUG`
 - `LOCAL_AI_DICTATION_BRIDGE_URL`
 - `LOCAL_AI_DICTATION_WAYBAR_SIGNAL`
+- `LOCAL_AI_DICTATION_HYPRLAND_PASTE` — dispatch paste directly from the bridge after clipboard copy
 - `LOCAL_AI_DICTATION_RETAIN_AUDIO` — opt-in private diagnostic WAV retention
 - `WILLOW_ACCESS_TOKEN`
 - `WILLOW_USER_ID`
@@ -362,7 +368,7 @@ Behavior:
 - Right click: persist the next backend and restart the bridge.
 - Display: `󰍬 Whisper`, `󰍬 Parakeet`, or `󰍬 Willow`.
 - Successful completion: copy the transcript, then ask Hyprland to paste into
-  the focused application.
+  the focused application directly from the bridge; Waybar remains the fallback.
 - Ghostty uses `Ctrl+Shift+V`; other applications use `Ctrl+V`.
 - State changes signal Waybar with `RTMIN+8`; no timer polling is required.
 - `/health` remains available for one-shot status and recovery checks.

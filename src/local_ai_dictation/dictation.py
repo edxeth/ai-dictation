@@ -23,6 +23,7 @@ from contextlib import nullcontext
 from typing import Any, Callable, cast
 
 from local_ai_dictation.audio import (
+    Pcm16StreamConverter,
     VAD_FRAME_SAMPLES,
     VAD_SAMPLE_RATE,
     build_vad_backend,
@@ -366,9 +367,10 @@ def _looks_like_missing_default_output_device(exc: Exception) -> bool:
     return "no default output device" in lowered or "default output device" in lowered
 
 
-STOP_CAPTURE_DRAIN_SECONDS = 1.0
+STOP_CAPTURE_DRAIN_SECONDS = 0.05
 PAREC_LATENCY_MSEC = 40
 PAREC_PROCESS_TIME_MSEC = 20
+PCM_STREAM_CHUNK_SAMPLES = 512
 
 
 def _record_audio_with_parec(
@@ -376,6 +378,7 @@ def _record_audio_with_parec(
     *,
     stop_requested: Callable[[], bool],
     status_stream=None,
+    on_audio_chunk: Callable[[bytes], None] | None = None,
 ) -> bytes | None:
     parec_path = shutil.which("parec")
     if parec_path is None:
@@ -384,6 +387,11 @@ def _record_audio_with_parec(
     default_spec = pulse_default_source_spec()
     capture_sample_rate = default_spec[0] if default_spec is not None else sample_rate
     capture_channels = default_spec[1] if default_spec is not None else 1
+    stream_converter = (
+        Pcm16StreamConverter(capture_sample_rate, capture_channels, sample_rate)
+        if on_audio_chunk is not None
+        else None
+    )
 
     process = subprocess.Popen(
         [
@@ -407,6 +415,7 @@ def _record_audio_with_parec(
         raise RuntimeError("parec stdout is unavailable")
 
     chunks: list[bytes] = []
+    reader_errors: list[Exception] = []
 
     def _reader() -> None:
         while True:
@@ -414,6 +423,14 @@ def _record_audio_with_parec(
             if not data:
                 return
             chunks.append(data)
+            if on_audio_chunk is not None and stream_converter is not None:
+                try:
+                    converted = stream_converter.convert(data)
+                    if converted:
+                        on_audio_chunk(converted)
+                except Exception as exc:
+                    reader_errors.append(exc)
+                    return
 
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
@@ -422,6 +439,8 @@ def _record_audio_with_parec(
     stop_deadline: float | None = None
     try:
         while not _shutdown_event.is_set():
+            if reader_errors:
+                break
             if stop_requested():
                 if stop_deadline is None:
                     stop_deadline = time.monotonic() + STOP_CAPTURE_DRAIN_SECONDS
@@ -445,6 +464,10 @@ def _record_audio_with_parec(
         reader_thread.join(timeout=2)
         process.stdout.close()
 
+    if reader_errors:
+        raise reader_errors[0]
+    if stream_converter is not None:
+        stream_converter.finish()
     audio_data = b"".join(chunks)
     if not audio_data:
         return None
@@ -462,17 +485,35 @@ def record_audio_interruptible(
     *,
     stop_requested: Callable[[], bool] | None = None,
     status_stream=None,
+    on_audio_chunk: Callable[[bytes], None] | None = None,
 ) -> bytes | None:
     status_stream = status_stream or _status_stream(config)
-    frames_per_buffer = VAD_FRAME_SAMPLES if config.vad else 1024
+    frames_per_buffer = (
+        VAD_FRAME_SAMPLES
+        if config.vad
+        else (PCM_STREAM_CHUNK_SAMPLES if on_audio_chunk is not None else 1024)
+    )
     if os.name == "posix" and not config.vad and config.input_device is None and shutil.which("parec") is not None:
+        parec_stream_started = False
+
+        def _forward_parec_audio(data: bytes) -> None:
+            nonlocal parec_stream_started
+            if on_audio_chunk is not None:
+                on_audio_chunk(data)
+                parec_stream_started = True
+
         try:
-            return _record_audio_with_parec(
-                sample_rate,
-                stop_requested=(stop_requested or (lambda: _shutdown_event.is_set() or _manual_stop_requested())),
-                status_stream=status_stream,
-            )
+            parec_kwargs: dict[str, Any] = {
+                "stop_requested": stop_requested
+                or (lambda: _shutdown_event.is_set() or _manual_stop_requested()),
+                "status_stream": status_stream,
+            }
+            if on_audio_chunk is not None:
+                parec_kwargs["on_audio_chunk"] = _forward_parec_audio
+            return _record_audio_with_parec(sample_rate, **parec_kwargs)
         except Exception as exc:
+            if parec_stream_started:
+                raise
             if config.debug:
                 print(f"parec capture fallback: {exc}", file=status_stream)
 
@@ -553,6 +594,7 @@ def record_audio_interruptible(
                     max_silence_ms=config.max_silence_ms,
                     sample_rate=sample_rate,
                     frame_samples=VAD_FRAME_SAMPLES,
+                    on_audio_chunk=on_audio_chunk,
                 )
             else:
                 frames: list[bytes] = []
@@ -564,10 +606,12 @@ def record_audio_interruptible(
                         elif time.monotonic() >= stop_deadline:
                             break
                     try:
-                        data = stream.read(1024, exception_on_overflow=False)
-                        frames.append(data)
+                        data = stream.read(frames_per_buffer, exception_on_overflow=False)
                     except Exception:
                         continue
+                    frames.append(data)
+                    if on_audio_chunk is not None:
+                        on_audio_chunk(data)
                 audio_data = b"".join(frames)
         finally:
             stream.stop_stream()

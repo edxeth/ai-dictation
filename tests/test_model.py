@@ -1,7 +1,28 @@
 from __future__ import annotations
 
-from local_ai_dictation.model import MODEL_ID, check_model_cache
+from pathlib import Path
 
+from local_ai_dictation.model import MODEL_ID, check_model_cache, warmup
+
+
+
+def test_parakeet_warmup_runs_real_inference_and_removes_fixture():
+    paths: list[Path] = []
+
+    class Engine:
+        def eval(self):
+            return self
+
+        def transcribe(self, audio, *, verbose=False):
+            path = Path(audio[0])
+            assert path.is_file()
+            paths.append(path)
+            return []
+
+    warmup(Engine())
+
+    assert len(paths) == 1
+    assert paths[0].exists() is False
 
 
 def test_check_model_cache_detects_local_snapshot(tmp_path, monkeypatch):

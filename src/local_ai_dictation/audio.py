@@ -243,6 +243,47 @@ def downmix_pcm16_to_mono(audio_data: bytes, channels: int) -> bytes:
     return audioop.tomono(audio_data, 2, 0.5, 0.5)
 
 
+class Pcm16StreamConverter:
+    """Incrementally converts native PCM16 capture into mono model-rate PCM."""
+
+    def __init__(self, input_sample_rate: int, input_channels: int, output_sample_rate: int) -> None:
+        if input_channels not in {1, 2}:
+            raise ValueError(f"Unsupported channel count for downmix: {input_channels}")
+        self._input_sample_rate = input_sample_rate
+        self._input_channels = input_channels
+        self._output_sample_rate = output_sample_rate
+        self._pending = bytearray()
+        self._rate_state: Any | None = None
+
+    def convert(self, audio_data: bytes) -> bytes:
+        if not audio_data:
+            return b""
+        self._pending.extend(audio_data)
+        frame_bytes = 2 * self._input_channels
+        complete_bytes = len(self._pending) - (len(self._pending) % frame_bytes)
+        if complete_bytes == 0:
+            return b""
+
+        complete = bytes(self._pending[:complete_bytes])
+        del self._pending[:complete_bytes]
+        mono = downmix_pcm16_to_mono(complete, self._input_channels)
+        if self._input_sample_rate == self._output_sample_rate:
+            return mono
+        converted, self._rate_state = audioop.ratecv(
+            mono,
+            2,
+            1,
+            self._input_sample_rate,
+            self._output_sample_rate,
+            self._rate_state,
+        )
+        return converted
+
+    def finish(self) -> None:
+        if self._pending:
+            raise ValueError("PCM stream ended with an incomplete sample frame")
+
+
 def resample_pcm16_mono(
     audio_data: bytes,
     input_sample_rate: int,
@@ -299,6 +340,7 @@ def record_until_vad_stop(
     max_silence_ms: int,
     sample_rate: int = VAD_SAMPLE_RATE,
     frame_samples: int = VAD_FRAME_SAMPLES,
+    on_audio_chunk: Callable[[bytes], None] | None = None,
 ) -> bytes:
     if sample_rate != VAD_SAMPLE_RATE:
         raise ValueError(f"VAD capture requires {VAD_SAMPLE_RATE} Hz audio")
@@ -317,6 +359,8 @@ def record_until_vad_stop(
             continue
 
         frames.append(data)
+        if on_audio_chunk is not None:
+            on_audio_chunk(data)
         is_speech = vad.is_speech(_normalize_vad_frame(data), sample_rate)
         if is_speech:
             speech_detected = True

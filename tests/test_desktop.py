@@ -353,7 +353,7 @@ def test_run_bridge_toggle_command_posts_to_bridge(monkeypatch, capsys):
         "url": "http://127.0.0.1:8765/session/toggle",
         "method": "POST",
         "body": b"{}",
-        "timeout": 5.0,
+        "timeout": 30.0,
     }
     assert capsys.readouterr().out.strip() == "recording"
 
