@@ -325,6 +325,18 @@ def test_streaming_session_finish_unblocks_when_full_queue_is_cancelled(monkeypa
     assert finish_errors
 
 
+def test_wait_for_result_treats_normal_session_close_as_empty_transcript():
+    from websockets.exceptions import ConnectionClosedOK
+
+    class _NormallyClosedSocket:
+        def recv(self, timeout=None):
+            raise ConnectionClosedOK(None, None)
+
+    engine = WillowEngine(access_token="test-token")
+
+    assert engine._wait_for_result(_NormallyClosedSocket(), WillowProtocol()) == ""
+
+
 def test_streaming_session_sends_audio_before_flush():
     pcm = bytes(range(256)) * 8
     audio_received = threading.Event()

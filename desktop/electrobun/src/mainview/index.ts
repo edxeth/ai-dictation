@@ -1,4 +1,5 @@
 import Electrobun, { Electroview } from "electrobun/view";
+import { startBridgeStateRefresh } from "./bridge-state-refresh";
 
 type TranscriptPayload = {
   schema_version: number;
@@ -162,6 +163,7 @@ const copiedHistoryIds = new Set<string>();
 const copiedHistoryTimers = new Map<string, number>();
 let sessionAudioContext: AudioContext | null = null;
 let bridgeEventSource: EventSource | null = null;
+let refreshStateInFlight = false;
 const APP_STARTED_AT = Date.now() / 1000;
 let lastObservedSessionState: SessionStatus = "offline";
 let lastPlayedStartCueAt: number | null = null;
@@ -636,6 +638,10 @@ function renderState(viewState: BridgeViewState) {
 }
 
 async function refreshState({ quiet = false }: { quiet?: boolean } = {}) {
+  if (refreshStateInFlight) {
+    return;
+  }
+  refreshStateInFlight = true;
   if (!quiet) {
     setBusy(true);
   }
@@ -643,6 +649,7 @@ async function refreshState({ quiet = false }: { quiet?: boolean } = {}) {
     const state = await electrobun.rpc!.request.getBridgeState({});
     applyBridgeViewState(state);
   } finally {
+    refreshStateInFlight = false;
     if (!quiet) {
       setBusy(false);
     }
@@ -751,6 +758,9 @@ async function bootstrap() {
     });
     await refreshState();
     connectBridgeEvents();
+    startBridgeStateRefresh(() => {
+      void refreshState({ quiet: true });
+    });
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
   }

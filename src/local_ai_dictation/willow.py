@@ -21,6 +21,7 @@ from uuid import uuid4
 import wave
 
 import msgpack
+from websockets.exceptions import ConnectionClosedOK
 from websockets.sync.client import connect
 
 from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
@@ -649,7 +650,10 @@ class WillowEngine:
 
     def _wait_for_result(self, socket: Any, protocol: WillowProtocol) -> str:
         while True:
-            envelope = self._receive(socket, protocol, self._result_timeout)
+            try:
+                envelope = self._receive(socket, protocol, self._result_timeout)
+            except ConnectionClosedOK:
+                return ""
             descriptor = envelope.get("d", {})
             if descriptor.get("key") == "error":
                 raise ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow protocol error: {descriptor.get('data')}")
