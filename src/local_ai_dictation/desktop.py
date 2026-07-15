@@ -206,10 +206,29 @@ def _terminate_existing_native_gui_processes() -> None:
                 continue
 
 
+def ensure_gui_bridge_running(namespace: Any) -> None:
+    host = str(getattr(namespace, "host", DEFAULT_BRIDGE_HOST))
+    port = int(getattr(namespace, "port", DEFAULT_BRIDGE_PORT))
+    if bridge_healthy(host, port):
+        return
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return
+
+    subprocess.Popen(
+        build_bridge_command(namespace),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    if not wait_for_bridge(host, port):
+        raise DesktopAppError(f"Local AI Dictation bridge did not become ready at {bridge_url(host, port)}.")
+
+
 def run_gui_command(namespace: Any) -> int:
     app_dir = ensure_desktop_app_available()
     bun_path = ensure_bun_available()
     ensure_gui_dependencies(app_dir, bun_path)
+    ensure_gui_bridge_running(namespace)
     _terminate_existing_native_gui_processes()
     completed = subprocess.run(
         [bun_path, "run", "start"],

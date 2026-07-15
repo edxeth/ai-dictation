@@ -317,8 +317,15 @@ async function playSessionCueAsync(kind: SessionCueKind): Promise<void> {
 }
 
 function setBusy(busy: boolean) {
-  toggleButton.disabled = busy;
-  clearHistoryButton.disabled = busy;
+  if (busy) {
+    toggleButton.disabled = true;
+    switchModelButton.disabled = true;
+    clearHistoryButton.disabled = true;
+    return;
+  }
+  if (currentState) {
+    renderState(currentState);
+  }
 }
 
 function setOverlay(visible: boolean, title = "Working…", message = "Please wait.") {

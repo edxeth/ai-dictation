@@ -366,6 +366,57 @@ def test_build_bridge_command_includes_whisper_backend():
     assert command[:7] == [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--backend", "whisper", "--host"]
 
 
+def test_run_gui_command_starts_bridge_when_offline(monkeypatch, tmp_path: Path):
+    app_dir = tmp_path / "desktop" / "electrobun"
+    app_dir.mkdir(parents=True)
+    bridge_processes: list[_FakePopen] = []
+
+    monkeypatch.setattr(desktop, "ensure_desktop_app_available", lambda: app_dir)
+    monkeypatch.setattr(desktop, "ensure_bun_available", lambda: "bun")
+    monkeypatch.setattr(desktop, "ensure_gui_dependencies", lambda path, bun_path: None)
+    monkeypatch.setattr(desktop, "_terminate_existing_native_gui_processes", lambda: None)
+    monkeypatch.setattr(desktop, "bridge_healthy", lambda host, port: False)
+    monkeypatch.setattr(desktop, "wait_for_bridge", lambda host, port, timeout_seconds=10.0, poll_interval=0.25: True)
+
+    def _fake_popen(command, **kwargs):
+        process = _FakePopen(command, **kwargs)
+        bridge_processes.append(process)
+        return process
+
+    monkeypatch.setattr(desktop.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(desktop.subprocess, "run", lambda command, **kwargs: _FakeCompletedProcess(returncode=0))
+
+    namespace = SimpleNamespace(host="127.0.0.1", port=8765, hotkey=None, bridge_command=None, backend="whisper")
+    assert desktop.run_gui_command(namespace) == 0
+    assert len(bridge_processes) == 1
+    assert bridge_processes[0].command[:6] == [
+        sys.executable,
+        "-m",
+        "local_ai_dictation.cli",
+        "bridge",
+        "--backend",
+        "whisper",
+    ]
+    host_index = bridge_processes[0].command.index("--host")
+    assert bridge_processes[0].command[host_index:host_index + 4] == ["--host", "127.0.0.1", "--port", "8765"]
+
+
+def test_run_gui_command_reuses_healthy_bridge(monkeypatch, tmp_path: Path):
+    app_dir = tmp_path / "desktop" / "electrobun"
+    app_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(desktop, "ensure_desktop_app_available", lambda: app_dir)
+    monkeypatch.setattr(desktop, "ensure_bun_available", lambda: "bun")
+    monkeypatch.setattr(desktop, "ensure_gui_dependencies", lambda path, bun_path: None)
+    monkeypatch.setattr(desktop, "_terminate_existing_native_gui_processes", lambda: None)
+    monkeypatch.setattr(desktop, "bridge_healthy", lambda host, port: True)
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("healthy bridge must not be restarted"))
+    monkeypatch.setattr(desktop.subprocess, "run", lambda command, **kwargs: _FakeCompletedProcess(returncode=0))
+
+    namespace = SimpleNamespace(host="127.0.0.1", port=8765, hotkey=None, bridge_command=None, backend=None)
+    assert desktop.run_gui_command(namespace) == 0
+
+
 def test_run_gui_command_launches_native_electrobun_app(monkeypatch, tmp_path: Path):
     app_dir = tmp_path / "desktop" / "electrobun"
     app_dir.mkdir(parents=True)
@@ -375,6 +426,7 @@ def test_run_gui_command_launches_native_electrobun_app(monkeypatch, tmp_path: P
     monkeypatch.setattr(desktop, "ensure_desktop_app_available", lambda: app_dir)
     monkeypatch.setattr(desktop, "ensure_bun_available", lambda: "bun")
     monkeypatch.setattr(desktop, "ensure_gui_dependencies", lambda path, bun_path: dependency_installs.append((path, bun_path)))
+    monkeypatch.setattr(desktop, "bridge_healthy", lambda host, port: True)
 
     def _fake_run(command, **kwargs):
         runs.append((command, kwargs.get("cwd"), kwargs.get("env")))

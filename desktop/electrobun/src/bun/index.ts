@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { FFIType, dlopen } from "bun:ffi";
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
 import { native, toCString } from "../../node_modules/electrobun/dist/api/bun/proc/native";
+import { backendToggleCommand, bridgeEndpoint } from "./backend-command";
 
 type SessionPayload = {
   schema_version: number;
@@ -251,9 +252,10 @@ function localCliPath(): string {
 
 function toggleBackendAndRestartBridge(): BackendName {
   const cli = localCliPath();
-  appendGuiLog("INFO", `Switching backend via ${cli}`);
+  const endpoint = bridgeEndpoint(BRIDGE_URL);
+  appendGuiLog("INFO", `Switching backend via ${cli} for ${endpoint.host}:${endpoint.port}`);
   const result = Bun.spawnSync({
-    cmd: [cli, "backend", "toggle", "--restart-bridge"],
+    cmd: backendToggleCommand(cli, BRIDGE_URL),
     stdout: "pipe",
     stderr: "pipe",
     env: {

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electrobun dev",
     "dev": "electrobun dev --watch",
-    "check": "bun build src/mainview/index.ts --target=browser --outdir .tmp-check/renderer && bun build src/bun/index.ts --target=bun --outdir .tmp-check/bun"
+    "test": "bun test",
+    "check": "bun test && bun build src/mainview/index.ts --target=browser --outdir .tmp-check/renderer && bun build src/bun/index.ts --target=bun --outdir .tmp-check/bun"
   },
   "dependencies": {
     "electrobun": "^1.15.1"

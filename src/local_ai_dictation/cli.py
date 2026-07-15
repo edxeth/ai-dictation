@@ -42,14 +42,15 @@ def _wait_for_bridge_ready(host: str, port: int, *, timeout_seconds: float = 10.
 
 def _find_bridge_pids(host: str, port: int) -> list[int]:
     patterns = [
-        f"local-ai-dictation bridge --host {host} --port {port}",
-        f"-m local_ai_dictation.cli bridge --host {host} --port {port}",
-        str(Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"),
+        f"local-ai-dictation bridge .*--host {host} --port {port}",
+        f"-m local_ai_dictation.cli bridge .*--host {host} --port {port}",
     ]
+    if host == "127.0.0.1" and port == 8765:
+        patterns.append(str(Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"))
     current_pid = os.getpid()
     pids: list[int] = []
     for pattern in patterns:
-        completed = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, check=False)
+        completed = subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True, text=True, check=False)
         if completed.returncode not in {0, 1}:
             continue
         for line in completed.stdout.splitlines():
@@ -88,15 +89,16 @@ def _restart_local_bridge(host: str, port: int) -> None:
             continue
 
     launcher = Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"
-    if launcher.exists():
-        subprocess.Popen([str(launcher)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    if launcher.exists() and host == "127.0.0.1" and port == 8765:
+        command = [str(launcher)]
     else:
-        subprocess.Popen(
-            [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", host, "--port", str(port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        command = [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", host, "--port", str(port)]
+    subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
     if not _wait_for_bridge_ready(host, port):
         raise SystemExit(f"bridge restart failed for {host}:{port}")
