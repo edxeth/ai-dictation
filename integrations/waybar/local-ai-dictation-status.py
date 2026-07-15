@@ -108,7 +108,7 @@ def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
     bridge = payload.get("bridge")
     session = payload.get("session")
     if not isinstance(bridge, dict) or not isinstance(session, dict):
-        return ("error", module_text, "Local AI Dictation error", "Unexpected bridge payload")
+        return ("error", module_text, "AI Dictation error", "Unexpected bridge payload")
 
     running_backend = str((session.get("config") or {}).get("backend") if isinstance(session.get("config"), dict) else preferred)
     running_backend = running_backend if running_backend in {"whisper", "parakeet", "willow"} else preferred

@@ -1,4 +1,4 @@
-"""Application error codes and exceptions for Local AI Dictation."""
+"""Application error codes and exceptions for AI Dictation."""
 
 from __future__ import annotations
 

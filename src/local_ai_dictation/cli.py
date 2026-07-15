@@ -1,4 +1,4 @@
-"""Top-level CLI entry point for Local AI Dictation."""
+"""Top-level CLI entry point for AI Dictation."""
 
 from __future__ import annotations
 
@@ -178,7 +178,7 @@ def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="local-ai-dictation",
-        description="Local AI Dictation.",
+        description="AI Dictation.",
     )
     subparsers = parser.add_subparsers(dest="command")
 

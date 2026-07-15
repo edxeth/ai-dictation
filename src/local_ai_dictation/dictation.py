@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive dictation flow for Local AI Dictation."""
+"""Interactive dictation flow for AI Dictation."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def _no_kbi_traceback(exc_type, exc, tb) -> None:
 sys.excepthook = _no_kbi_traceback
 
 
-HELP_DESC = "Local AI Dictation with selectable Whisper, Parakeet, or Willow backends."
+HELP_DESC = "AI Dictation with selectable Whisper, Parakeet, or Willow backends."
 HELP_EPILOG = """Examples:
   local-ai-dictation dictation
   local-ai-dictation dictation --backend whisper

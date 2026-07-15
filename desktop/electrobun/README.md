@@ -1,4 +1,4 @@
-# Local AI Dictation Desktop App
+# AI Dictation Desktop App
 
 Small desktop control surface for `local-ai-dictation bridge`, with native Linux support and an optional packaged Windows GUI + WSL bridge workflow.
 

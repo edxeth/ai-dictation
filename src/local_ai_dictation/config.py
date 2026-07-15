@@ -1,4 +1,4 @@
-"""Configuration parsing and precedence resolution for Local AI Dictation."""
+"""Configuration parsing and precedence resolution for AI Dictation."""
 
 from __future__ import annotations
 

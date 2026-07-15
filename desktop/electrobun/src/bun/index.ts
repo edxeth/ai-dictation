@@ -638,7 +638,7 @@ process.on("unhandledRejection", (reason) => {
 writeStartupDiagnostics();
 appendGuiLog("INFO", "Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
-  title: "Local AI Dictation",
+  title: "AI Dictation",
   url: "views://mainview/index.html",
   titleBarStyle: "default",
   transparent: false,
@@ -885,7 +885,7 @@ function startAutomationServer() {
 ensureMainWindowSize();
 
 tray = new Tray({
-  title: "Local AI Dictation",
+  title: "AI Dictation",
   image: APP_ICON_URL,
   width: 18,
   height: 18,
@@ -898,7 +898,7 @@ mainWindow.on("close", () => {
 });
 
 tray.setMenu([
-  { type: "normal", label: "Open Local AI Dictation", action: "open" },
+  { type: "normal", label: "Open AI Dictation", action: "open" },
   { type: "normal", label: `Toggle Recording (${HOTKEY})`, action: "toggle" },
   { type: "divider" },
   { type: "normal", label: "Quit", action: "quit" },
@@ -935,6 +935,6 @@ if (IS_LINUX_WAYLAND) {
 
 startAutomationServer();
 
-appendGuiLog("INFO", "Local AI Dictation desktop app started");
+appendGuiLog("INFO", "AI Dictation desktop app started");
 appendGuiLog("INFO", `Bridge URL: ${BRIDGE_URL}`);
 appendGuiLog("INFO", `Hotkey: ${HOTKEY}`);

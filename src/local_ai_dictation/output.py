@@ -1,4 +1,4 @@
-"""Transcript output rendering and delivery helpers for Local AI Dictation."""
+"""Transcript output rendering and delivery helpers for AI Dictation."""
 
 from __future__ import annotations
 

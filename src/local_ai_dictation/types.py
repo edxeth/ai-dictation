@@ -1,4 +1,4 @@
-"""Stable internal data models and protocol boundaries for Local AI Dictation."""
+"""Stable internal data models and protocol boundaries for AI Dictation."""
 
 from __future__ import annotations
 

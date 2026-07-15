@@ -1,4 +1,4 @@
-"""Local AI Dictation package."""
+"""AI Dictation package."""
 
 __all__ = ["__version__"]
 

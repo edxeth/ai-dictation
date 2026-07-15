@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Local AI Dictation
+Name=AI Dictation
 GenericName=Speech-to-text dictation
 Comment=Control Whisper, Parakeet, and Willow Voice dictation
 Exec=local-ai-dictation gui

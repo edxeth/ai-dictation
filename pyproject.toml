@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-ai-dictation"
-version = "0.1.0"
-description = "Local AI Dictation for Linux and optional WSL workflows"
+version = "1.0.0"
+description = "AI voice dictation with local and cloud backends and a desktop GUI"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-authors = [{ name = "Local AI Dictation" }]
+authors = [{ name = "AI Dictation" }]
 dependencies = [
   "nemo_toolkit[asr]",
   "faster-whisper",

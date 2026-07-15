@@ -9,7 +9,7 @@ It provides:
 - RPC between the desktop process and renderer
 - desktop APIs like window, tray, and global shortcuts
 
-In this repo it powers the `Local AI Dictation` and talks to the Python bridge over HTTP.
+In this repo it powers the `AI Dictation` and talks to the Python bridge over HTTP.
 
 ## How this repo uses it
 

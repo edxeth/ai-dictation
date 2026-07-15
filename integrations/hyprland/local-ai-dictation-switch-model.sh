@@ -19,7 +19,7 @@ case "$after" in
 esac
 
 if command -v notify-send >/dev/null 2>&1; then
-  notify-send "Local AI Dictation" "Model switched to $label" >/dev/null 2>&1 || true
+  notify-send "AI Dictation" "Model switched to $label" >/dev/null 2>&1 || true
 fi
 
 pkill -RTMIN+8 waybar 2>/dev/null || true

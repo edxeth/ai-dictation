@@ -1,4 +1,4 @@
-"""Desktop app launch helpers for Local AI Dictation."""
+"""Desktop app launch helpers for AI Dictation."""
 
 from __future__ import annotations
 
@@ -56,10 +56,10 @@ def bridge_start_command(host: str, port: int, *, backend: str | None = None) ->
 def ensure_desktop_app_available(app_dir: Path | None = None) -> Path:
     resolved_app_dir = desktop_app_dir() if app_dir is None else app_dir
     if not resolved_app_dir.exists():
-        raise DesktopAppError(f"Local AI Dictation GUI app not found at {resolved_app_dir}")
+        raise DesktopAppError(f"AI Dictation GUI app not found at {resolved_app_dir}")
     package_json = resolved_app_dir / "package.json"
     if not package_json.exists():
-        raise DesktopAppError(f"Local AI Dictation GUI package manifest not found at {package_json}")
+        raise DesktopAppError(f"AI Dictation GUI package manifest not found at {package_json}")
     return resolved_app_dir
 
 
@@ -131,10 +131,10 @@ def stage_windows_desktop_app(app_dir: Path | None = None) -> dict[str, str]:
 def ensure_gui_dependencies(app_dir: Path, bun_path: str) -> None:
     if (app_dir / "node_modules").exists():
         return
-    print(f"Installing Local AI Dictation GUI dependencies in {app_dir}...")
+    print(f"Installing AI Dictation GUI dependencies in {app_dir}...")
     completed = subprocess.run([bun_path, "install"], cwd=app_dir, check=False)
     if completed.returncode != 0:
-        raise DesktopAppError("Failed to install Local AI Dictation GUI dependencies with `bun install`.")
+        raise DesktopAppError("Failed to install AI Dictation GUI dependencies with `bun install`.")
 
 
 def default_gui_log_dir(env: dict[str, str] | None = None) -> Path | None:
@@ -221,7 +221,7 @@ def ensure_gui_bridge_running(namespace: Any) -> None:
         start_new_session=True,
     )
     if not wait_for_bridge(host, port):
-        raise DesktopAppError(f"Local AI Dictation bridge did not become ready at {bridge_url(host, port)}.")
+        raise DesktopAppError(f"AI Dictation bridge did not become ready at {bridge_url(host, port)}.")
 
 
 def run_gui_command(namespace: Any) -> int:
@@ -1207,7 +1207,7 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
         if not wait_for_bridge(host, bridge_port, timeout_seconds=10.0):
             exit_code = bridge_process.poll()
             raise DesktopAppError(
-                f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+                f"AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
             )
 
         def _recovered(state: dict[str, Any]) -> bool:
@@ -1360,7 +1360,7 @@ def run_gui_package_main_window_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(
@@ -1583,7 +1583,7 @@ def run_gui_package_tray_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(
@@ -1818,7 +1818,7 @@ def run_gui_package_hotkey_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(

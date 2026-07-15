@@ -1,4 +1,4 @@
-# Spec: upgrade PyTorch stack for Local AI Dictation
+# Spec: upgrade PyTorch stack for AI Dictation
 
 ## Goal
 Upgrade the project from the current PyTorch CUDA stack to the latest practical GPU-supported stack, keep NeMo/Parakeet working, keep Whisper working, and fully validate the app after the dependency change.

@@ -1,4 +1,4 @@
-"""Opt-in localhost bridge for controlling Local AI Dictation from a desktop app."""
+"""Opt-in localhost bridge for controlling AI Dictation from a desktop app."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
 BRIDGE_SCHEMA_VERSION = 1
-DEFAULT_E2E_TRANSCRIPT = "Local AI Dictation deterministic E2E transcript"
+DEFAULT_E2E_TRANSCRIPT = "AI Dictation deterministic E2E transcript"
 DIAGNOSTIC_RAW_FILENAME = "last-capture-raw.wav"
 DIAGNOSTIC_MODEL_INPUT_FILENAME = "last-capture-16k.wav"
 HYPRCTL_TIMEOUT_SECONDS = 0.25
@@ -963,7 +963,7 @@ def run_bridge_server(namespace: Any) -> int:
     signal.signal(signal.SIGINT, _request_shutdown)
     signal.signal(signal.SIGTERM, _request_shutdown)
 
-    print(f"Local AI Dictation bridge listening on http://{host}:{port} ({controller.backend})")
+    print(f"AI Dictation bridge listening on http://{host}:{port} ({controller.backend})")
     print("Run the Windows app, then use its button or hotkey to start/stop recording.")
 
     try:

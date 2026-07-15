@@ -1,4 +1,4 @@
-"""Fixture-based benchmark helpers and CLI support for Local AI Dictation."""
+"""Fixture-based benchmark helpers and CLI support for AI Dictation."""
 
 from __future__ import annotations
 

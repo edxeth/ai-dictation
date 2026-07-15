@@ -1,6 +1,6 @@
-# Local AI Dictation
+# AI Dictation
 
-Local microphone dictation for Linux with:
+AI voice dictation with local and cloud transcription for Linux, plus a desktop GUI and system integrations:
 
 - local **Whisper** and **Parakeet** speech-to-text backends
 - the **Willow Voice** cloud backend
@@ -248,7 +248,7 @@ If `local-ai-dictation` is not available in the graphical session's `PATH`,
 replace the desktop entry's `Exec` and `TryExec` values with the absolute path
 to `~/.local/bin/local-ai-dictation`.
 
-The current application name is **Local AI Dictation**. Old launcher entries
+The current application name is **AI Dictation**. Old launcher entries
 named **Parakeet Dictation** or `parakeet-desktop` are obsolete build artifacts,
 not a separate application. Remove stale desktop entries and restart the
 launcher provider, for example:

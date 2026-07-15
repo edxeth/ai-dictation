@@ -1,4 +1,4 @@
-"""Model readiness and transcription helpers for Local AI Dictation."""
+"""Model readiness and transcription helpers for AI Dictation."""
 
 from __future__ import annotations
 

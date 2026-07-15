@@ -1,4 +1,4 @@
-"""Diagnostics collection and rendering for Local AI Dictation."""
+"""Diagnostics collection and rendering for AI Dictation."""
 
 from __future__ import annotations
 
@@ -307,7 +307,7 @@ def collect_doctor_report(check_model_cache: bool = False, *, backend: str | Non
 
 def render_doctor_text(report: DoctorReport) -> str:
     lines = [
-        "Local AI Dictation doctor",
+        "AI Dictation doctor",
         f"overall: {report.status['overall']}",
         f"platform: {report.platform.get('system', 'unknown')} {report.platform.get('release', '')}".rstrip(),
         f"pulse: {report.pulse.get('status', 'unknown')} ({report.pulse.get('detail', 'no detail')})",
