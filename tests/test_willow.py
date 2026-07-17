@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 import threading
 import time
+from urllib.parse import parse_qs, urlparse
 import wave
 
 import msgpack
 import pytest
 from websockets.sync.server import serve
 
+import local_ai_dictation.cli as cli_module
 from local_ai_dictation.cli import main
 from local_ai_dictation.types import DictationConfig
 import local_ai_dictation.willow as willow_module
@@ -123,6 +127,132 @@ def test_willow_session_import_cli_writes_private_minimal_file(tmp_path: Path, m
     assert "provider_token" not in stored
     assert stored["user_id"] == "official-user"
     assert owned.stat().st_mode & 0o777 == 0o600
+
+
+def test_willow_session_login_cli_completes_google_pkce_and_writes_private_session(
+    tmp_path: Path, monkeypatch, capsys
+):
+    state_home = tmp_path / "state"
+    opened_urls: list[str] = []
+    requests = []
+    restarted: list[tuple[str, int]] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "access_token": "oauth-access",
+                    "refresh_token": "oauth-refresh",
+                    "expires_at": 4_000_000_000,
+                    "provider_token": "must-not-be-stored",
+                    "user": {"id": "oauth-user", "email": "private@example.com"},
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+    monkeypatch.setattr(willow_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        willow_module.getpass,
+        "getpass",
+        lambda prompt: "https://willowvoice.com/success-open-app?code=oauth-code",
+    )
+    monkeypatch.setattr(cli_module, "_find_bridge_pids", lambda host, port: [123])
+    monkeypatch.setattr(
+        cli_module,
+        "_restart_local_bridge",
+        lambda host, port: restarted.append((host, port)),
+    )
+
+    assert main(["willow-session", "login", "--json"]) == 0
+
+    assert len(opened_urls) == 1
+    authorize_url = opened_urls[0]
+    assert authorize_url.startswith("https://db.willowvoice.com/auth/v1/authorize?")
+    assert "provider=google" in authorize_url
+    assert "redirect_to=https%3A%2F%2Fwillowvoice.com%2Fsuccess-open-app" in authorize_url
+    authorize_query = parse_qs(urlparse(authorize_url).query)
+    assert authorize_query["code_challenge_method"] == ["s256"]
+    assert len(requests) == 1
+    request, timeout = requests[0]
+    request_body = json.loads(request.data.decode("utf-8"))
+    expected_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(request_body["code_verifier"].encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    assert authorize_query["code_challenge"] == [expected_challenge]
+    assert request.full_url == "https://db.willowvoice.com/auth/v1/token?grant_type=pkce"
+    assert request_body["auth_code"] == "oauth-code"
+    assert request_body["code_verifier"]
+    assert timeout == 8.0
+
+    payload = json.loads(capsys.readouterr().out)
+    owned = state_home / "local-ai-dictation" / "willow-session.json"
+    stored = json.loads(owned.read_text(encoding="utf-8"))
+    assert payload["ready"] is True
+    assert stored == {
+        "access_token": "oauth-access",
+        "refresh_token": "oauth-refresh",
+        "expires_at": 4_000_000_000.0,
+        "user_id": "oauth-user",
+    }
+    assert owned.stat().st_mode & 0o777 == 0o600
+    assert restarted == [("127.0.0.1", 8765)]
+
+
+def test_google_oauth_exchange_converts_expires_in_to_absolute_expiry(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "access_token": "oauth-access",
+                    "refresh_token": "oauth-refresh",
+                    "expires_in": 3600,
+                    "user": {"id": "oauth-user"},
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(willow_module, "urlopen", lambda request, timeout: Response())
+    monkeypatch.setattr(willow_module.time, "time", lambda: 1_000.0)
+
+    session = willow_module._exchange_oauth_code("oauth-code", "pkce-verifier")
+
+    assert session.expires_at == 4_600.0
+
+
+def test_willow_session_login_rejects_callback_from_another_host(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: True)
+    monkeypatch.setattr(
+        willow_module.getpass,
+        "getpass",
+        lambda prompt: "https://attacker.example/success-open-app?code=stolen-code",
+    )
+    monkeypatch.setattr(
+        willow_module,
+        "urlopen",
+        lambda request, timeout: pytest.fail("invalid callback must not be exchanged"),
+    )
+
+    with pytest.raises(Exception, match="success URL from willowvoice.com"):
+        main(["willow-session", "login"])
+
+    assert not (tmp_path / "state" / "local-ai-dictation" / "willow-session.json").exists()
 
 
 def test_load_session_accepts_explicit_environment_token():

@@ -224,7 +224,7 @@ def _build_issues(
                 severity="fail",
                 message=f"Model imports are not ready: {detail}",
                 remediation=(
-                    "Import a session with `local-ai-dictation willow-session import SOURCE_PATH` or provide WILLOW_ACCESS_TOKEN."
+                    "Run `local-ai-dictation willow-session login`, import a fresh session, or provide WILLOW_ACCESS_TOKEN."
                     if backend == "willow"
                     else "Install the required runtime dependencies for the selected local model."
                 ),

@@ -104,6 +104,11 @@ def _restart_local_bridge(host: str, port: int) -> None:
         raise SystemExit(f"bridge restart failed for {host}:{port}")
 
 
+def _restart_running_bridge(host: str, port: int) -> None:
+    if _find_bridge_pids(host, port):
+        _restart_local_bridge(host, port)
+
+
 def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
@@ -341,12 +346,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     willow_session_parser = subparsers.add_parser(
         "willow-session",
-        help="Import or inspect the private Willow cloud session.",
-        description="Import or inspect the private Willow cloud session.",
+        help="Log in, import, or inspect the private Willow cloud session.",
+        description="Log in, import, or inspect the private Willow cloud session.",
     )
     willow_session_parser.add_argument(
         "action",
-        choices=["status", "import"],
+        choices=["status", "import", "login"],
         help="Session action.",
     )
     willow_session_parser.add_argument(
@@ -359,6 +364,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="json_output",
         help="Emit machine-readable JSON without credential values.",
+    )
+    willow_session_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Running bridge host to reload after a successful login.",
+    )
+    willow_session_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Running bridge port to reload after a successful login.",
     )
     willow_session_parser.set_defaults(handler=_run_willow_session_namespace)
 
@@ -717,10 +733,23 @@ def _run_backend_namespace(namespace: argparse.Namespace) -> int:
 
 
 def _run_willow_session_namespace(namespace: argparse.Namespace) -> int:
-    from local_ai_dictation.willow import import_session_file, load_session, resolve_session_path, session_path
+    from local_ai_dictation.willow import (
+        import_session_file,
+        load_session,
+        login_google_session,
+        resolve_session_path,
+        session_path,
+    )
 
     action = str(getattr(namespace, "action", "status"))
-    if action == "import":
+    if action == "login":
+        path = login_google_session()
+        session = load_session(path=path)
+        _restart_running_bridge(
+            str(getattr(namespace, "host", "127.0.0.1")),
+            int(getattr(namespace, "port", 8765)),
+        )
+    elif action == "import":
         source_path = getattr(namespace, "source_path", None)
         if not source_path:
             raise SystemExit("willow-session import requires SOURCE_PATH")

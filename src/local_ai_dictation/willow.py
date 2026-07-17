@@ -6,19 +6,26 @@ selects Frontier Mini or Frontier Pro server-side according to the account plan.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+import getpass
+import hashlib
 import json
 import os
 from pathlib import Path
 import queue
+import secrets
+import sys
 import tempfile
 import threading
 import time
 from typing import Any, Iterable, Mapping, Sequence
-from urllib.parse import urlencode
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 import wave
+import webbrowser
 
 import msgpack
 from websockets.exceptions import ConnectionClosedOK
@@ -30,7 +37,10 @@ from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 PRODUCTION_TRANSCRIBE_URL = "wss://middleware.willowvoice.com/transcribe"
 SUPABASE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=refresh_token"
+SUPABASE_PKCE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=pkce"
+SUPABASE_AUTHORIZE_URL = "https://db.willowvoice.com/auth/v1/authorize"
 SUPABASE_PUBLIC_KEY = "sb_publishable_zK_SHENTsKCbRZP0-1mkeA_HUlYW4wM"
+WILLOW_OAUTH_REDIRECT_URL = "https://willowvoice.com/success-open-app"
 DEFAULT_SESSION_PATH = Path.home() / ".local" / "state" / "local-ai-dictation" / "willow-session.json"
 PCM_PACKET_BYTES = 1024
 AUDIO_QUEUE_MAX_CHUNKS = 512
@@ -145,6 +155,116 @@ def import_session_file(
     return destination_path
 
 
+def _google_oauth_url(code_challenge: str) -> str:
+    query = urlencode(
+        {
+            "provider": "google",
+            "redirect_to": WILLOW_OAUTH_REDIRECT_URL,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "s256",
+        }
+    )
+    return f"{SUPABASE_AUTHORIZE_URL}?{query}"
+
+
+def _oauth_callback_code(callback_url: str) -> str:
+    parsed = urlparse(callback_url.strip())
+    is_web_callback = (
+        parsed.scheme == "https"
+        and parsed.netloc == "willowvoice.com"
+        and parsed.path == "/success-open-app"
+    )
+    is_app_callback = parsed.scheme == "willow" and parsed.netloc == "login-callback"
+    if not (is_web_callback or is_app_callback):
+        raise ModelError(
+            MODEL_IMPORT_FAILED,
+            "Willow login callback must be the success URL from willowvoice.com",
+        )
+    query = parse_qs(parsed.query)
+    error = query.get("error_description", query.get("error", [""]))[0]
+    if error:
+        raise ModelError(MODEL_IMPORT_FAILED, f"Willow login failed: {error}")
+    code = query.get("code", [""])[0].strip()
+    if not code:
+        raise ModelError(MODEL_IMPORT_FAILED, "Willow login callback does not contain an authorization code")
+    return code
+
+
+def _session_from_token_payload(payload: Any, missing_message: str) -> WillowSession:
+    session = _find_session(payload)
+    if session is None:
+        raise ModelError(MODEL_IMPORT_FAILED, missing_message)
+    if session.expires_at is None and isinstance(payload, dict) and isinstance(payload.get("expires_in"), (int, float)):
+        session = WillowSession(
+            access_token=session.access_token,
+            user_id=session.user_id,
+            refresh_token=session.refresh_token,
+            expires_at=time.time() + float(payload["expires_in"]),
+        )
+    return session
+
+
+def _http_error_message(exc: HTTPError) -> str:
+    try:
+        payload = json.loads(exc.read(4096).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return f"HTTP {exc.code}: {exc.reason}"
+    if isinstance(payload, dict):
+        for key in ("msg", "message", "error_description", "error"):
+            detail = payload.get(key)
+            if isinstance(detail, str) and detail.strip():
+                return f"HTTP {exc.code}: {detail.strip()}"
+    return f"HTTP {exc.code}: {exc.reason}"
+
+
+def _exchange_oauth_code(code: str, code_verifier: str) -> WillowSession:
+    request = Request(
+        SUPABASE_PKCE_TOKEN_URL,
+        data=json.dumps({"auth_code": code, "code_verifier": code_verifier}).encode("utf-8"),
+        method="POST",
+        headers={
+            "apikey": SUPABASE_PUBLIC_KEY,
+            "Authorization": f"Bearer {SUPABASE_PUBLIC_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=8.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ModelError(MODEL_IMPORT_FAILED, f"Could not complete Willow Google login: {_http_error_message(exc)}") from exc
+    except Exception as exc:
+        raise ModelError(MODEL_IMPORT_FAILED, f"Could not complete Willow Google login: {exc}") from exc
+    session = _session_from_token_payload(payload, "Willow Google login returned no session")
+    if not session.refresh_token:
+        raise ModelError(MODEL_IMPORT_FAILED, "Willow Google login returned no refreshable session")
+    return session
+
+
+def login_google_session(*, env: Mapping[str, str] | None = None) -> Path:
+    code_verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    authorize_url = _google_oauth_url(code_challenge)
+
+    opened = webbrowser.open(authorize_url)
+    if not opened:
+        print(f"Open this Willow login URL in your browser:\n{authorize_url}", file=sys.stderr)
+    print(
+        "After Google login, copy the complete https://willowvoice.com/success-open-app?code=... URL "
+        "from the browser address bar and paste it below.",
+        file=sys.stderr,
+    )
+    try:
+        callback_url = getpass.getpass("").strip()
+    except EOFError as exc:
+        raise ModelError(MODEL_IMPORT_FAILED, "Willow login callback was not provided") from exc
+    session = _exchange_oauth_code(_oauth_callback_code(callback_url), code_verifier)
+    destination = session_path(env)
+    _write_owned_session(session, destination)
+    return destination
+
+
 def load_session(
     *,
     path: Path | None = None,
@@ -164,7 +284,7 @@ def load_session(
     except FileNotFoundError as exc:
         raise ModelError(
             MODEL_IMPORT_FAILED,
-            f"Willow session required. Run `local-ai-dictation willow-session import SOURCE_PATH` or set WILLOW_ACCESS_TOKEN. Session not found at {resolved_path}",
+            f"Willow session required. Run `local-ai-dictation willow-session login` or import a session. Session not found at {resolved_path}",
         ) from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise ModelError(MODEL_IMPORT_FAILED, f"Could not read Willow session at {resolved_path}: {exc}") from exc
@@ -179,7 +299,7 @@ def load_session(
 
 def _refresh_session(session: WillowSession) -> WillowSession:
     if not session.refresh_token:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session import SOURCE_PATH` again.")
+        raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
     request = Request(
         SUPABASE_TOKEN_URL,
         data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
@@ -193,19 +313,11 @@ def _refresh_session(session: WillowSession) -> WillowSession:
     try:
         with urlopen(request, timeout=8.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {_http_error_message(exc)}") from exc
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {exc}") from exc
-    refreshed = _find_session(payload)
-    if refreshed is None:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow login refresh returned no session")
-    if refreshed.expires_at is None and isinstance(payload.get("expires_in"), (int, float)):
-        refreshed = WillowSession(
-            access_token=refreshed.access_token,
-            user_id=refreshed.user_id,
-            refresh_token=refreshed.refresh_token,
-            expires_at=time.time() + float(payload["expires_in"]),
-        )
-    return refreshed
+    return _session_from_token_payload(payload, "Willow login refresh returned no session")
 
 
 def _replace_stored_session(value: Any, old_access_token: str, refreshed: WillowSession) -> tuple[Any, bool]:
@@ -691,7 +803,7 @@ def check_model_cache(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     try:
         session = load_session(env=env)
         if session.expires_at is not None and session.expires_at <= time.time() + 60 and not session.refresh_token:
-            raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session import SOURCE_PATH` again.")
+            raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
         ready = True
         error = None
     except ModelError as exc:

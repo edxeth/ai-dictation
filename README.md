@@ -28,6 +28,7 @@ local-ai-dictation backend set parakeet
 local-ai-dictation backend set willow
 local-ai-dictation backend toggle --restart-bridge
 
+local-ai-dictation willow-session login
 local-ai-dictation willow-session status --json
 local-ai-dictation devices --json
 local-ai-dictation doctor --json
@@ -71,12 +72,32 @@ Willow account plus a refreshable Supabase session.
 
 ## Willow authentication
 
-The backend does **not** provide an interactive Willow login screen. It accepts
-one of these credentials:
+The backend supports Google OAuth through the system browser and also accepts
+imported or explicit credentials:
 
-1. An app-owned imported Willow session — recommended.
-2. `WILLOW_ACCESS_TOKEN` plus optional `WILLOW_USER_ID` — useful for isolated
+1. Browser-based Google OAuth — recommended for Google-created accounts.
+2. An app-owned imported Willow session.
+3. `WILLOW_ACCESS_TOKEN` plus optional `WILLOW_USER_ID` — useful for isolated
    or ephemeral environments.
+
+### Sign in with Google OAuth
+
+```bash
+local-ai-dictation willow-session login
+```
+
+The command opens Willow's normal Google login in the system browser using
+Supabase PKCE. After login, copy the complete
+`https://willowvoice.com/success-open-app?code=...` URL from the browser address
+bar and paste it into the terminal. The callback code is exchanged using the
+in-memory PKCE verifier, and only the minimal refreshable session is stored.
+If the local bridge is already running, it is restarted automatically so it
+loads the new credentials. The official Willow app and Wine are not required.
+
+Treat the callback URL as a short-lived credential: paste it only into the
+waiting command, not into chat, logs, or shell history. Each independently
+refreshing device must perform its own login; never copy one session file to
+multiple active devices.
 
 ### Import an official Willow session
 
