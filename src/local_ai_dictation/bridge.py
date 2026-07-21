@@ -471,21 +471,11 @@ class DictationBridgeController:
                 streaming_session = start_streaming()
                 with self._lock:
                     self._active_streaming_session = streaming_session
-                if self._stop_requested.is_set() or self._shutdown_requested.is_set():
-                    streaming_session.cancel()
-                    self._complete_cancelled_before_recording()
-                    return
-                try:
-                    streaming_session.wait_ready()
-                except ModelError:
-                    if self._stop_requested.is_set() or self._shutdown_requested.is_set():
-                        self._complete_cancelled_before_recording()
-                        return
-                    raise
-                if self._stop_requested.is_set() or self._shutdown_requested.is_set():
-                    streaming_session.cancel()
-                    self._complete_cancelled_before_recording()
-                    return
+                # The microphone opens immediately. Streaming backends buffer
+                # incoming PCM internally while their readiness completes in the
+                # background (Willow's TLS + protocol handshake, Whisper's
+                # warmup), so capture must never block on wait_ready(). Blocking
+                # here is what previously dropped the first ~2s of speech.
                 on_audio_chunk = streaming_session.send_audio
             else:
                 capture_sample_rate = (
@@ -494,6 +484,12 @@ class DictationBridgeController:
                     else resolve_input_sample_rate(self.input_device, self._pyaudio_module)
                 )
                 on_audio_chunk = None
+
+            if self._stop_requested.is_set() or self._shutdown_requested.is_set():
+                if streaming_session is not None:
+                    streaming_session.cancel()
+                self._complete_cancelled_before_recording()
+                return
 
             with self._lock:
                 self._state = "recording"
@@ -543,6 +539,18 @@ class DictationBridgeController:
                 )
 
             if streaming_session is not None:
+                # The backend handshake ran concurrently with capture; make sure
+                # it completed (and surface its error) before finalizing. For
+                # Whisper this is instantaneous; for Willow it normally finished
+                # while the user was still speaking.
+                try:
+                    streaming_session.wait_ready()
+                except ModelError:
+                    if self._stop_requested.is_set() or self._shutdown_requested.is_set():
+                        streaming_session.cancel()
+                        self._complete_cancelled_before_recording()
+                        return
+                    raise
                 if has_probable_speech(infer_audio_data, 16000, vad_mode=config.vad_mode):
                     self._append_diagnostic("🤖 Generating...")
                     transcript_text = streaming_session.finish()

@@ -518,6 +518,101 @@ def test_streaming_session_sends_audio_before_flush():
     assert b"".join(received_audio) == pcm
 
 
+def test_streaming_session_buffers_audio_sent_before_handshake_ready(repo_fixture_dir):
+    # The bridge starts capture before wait_ready() returns; PCM captured during
+    # the Willow handshake must be buffered and still delivered to the server,
+    # so the first seconds of speech are not lost. Uses the repo's prerecorded
+    # fixture (1s of 16kHz mono speech) so the whole utterance is captured while
+    # the simulated handshake is still pending.
+    import wave
+
+    with wave.open(str(repo_fixture_dir / "short_16k.wav"), "rb") as handle:
+        pcm = handle.readframes(handle.getnframes())
+    health_received = threading.Event()
+    allow_health = threading.Event()
+    received_audio: list[bytes] = []
+    flush_received = threading.Event()
+
+    def handler(socket):
+        incoming = WillowProtocol()
+        outgoing = WillowProtocol()
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None or envelope["d"]["key"] != "health_packet":
+                continue
+            health_received.set()
+            assert allow_health.wait(timeout=2)
+            socket.send(outgoing.encode("health_packet", {"ok": True})[0])
+            break
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None:
+                continue
+            key = envelope["d"]["key"]
+            if key == "audio_packet":
+                received_audio.append(envelope["d"]["data"])
+            elif key == "flush_packet":
+                flush_received.set()
+                socket.send(
+                    outgoing.encode(
+                        "dictation_result",
+                        {"actions": [{"type": "paste", "text": "Buffered start transcript"}]},
+                    )[0]
+                )
+                return
+
+    with serve(handler, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.socket.getsockname()[1]
+        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+
+        session = engine.start_streaming()
+        assert health_received.wait(timeout=2)
+        # The handshake has not completed yet, but capture is already feeding PCM.
+        session.send_audio(pcm)
+        assert allow_health.is_set() is False
+
+        allow_health.set()
+        result = session.finish()
+        server.shutdown()
+        thread.join(timeout=2)
+
+    assert result == "Buffered start transcript"
+    assert flush_received.is_set()
+    assert b"".join(received_audio) == pcm
+
+
+def test_streaming_session_send_audio_is_silent_after_self_terminated_session(monkeypatch):
+    # If the Willow handshake fails while capture is still feeding the session,
+    # send_audio must drop audio quietly instead of raising out of the recorder.
+    release_open = threading.Event()
+    engine = WillowEngine(access_token="test-token", connect_timeout=1.0, result_timeout=1.0)
+
+    def failing_open():
+        release_open.wait(timeout=2)
+        raise RuntimeError("handshake failed")
+
+    monkeypatch.setattr(engine, "_open_socket", failing_open)
+    session = engine.start_streaming()
+    # send_audio while the handshake is still in flight buffers normally.
+    session.send_audio(b"\x00\x00" * 100)
+    release_open.set()
+    # Once the session ends on its own, further audio must not raise.
+    deadline = time.monotonic() + 2.0
+    while not session._finished.is_set() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert session._finished.is_set()
+    session.send_audio(b"\x00\x00" * 100)
+
+    finish_errors: list[Exception] = []
+    try:
+        session.finish()
+    except Exception as exc:
+        finish_errors.append(exc)
+    assert finish_errors  # the underlying handshake error still surfaces
+
+
 def test_transcribe_wav_sends_willow_handshake_and_recording(tmp_path: Path):
     pcm = bytes(range(256)) * 10
     fixture = tmp_path / "spoken.wav"

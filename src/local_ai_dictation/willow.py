@@ -521,6 +521,11 @@ class WillowStreamingSession:
             if self._finish_requested:
                 self._raise_if_failed()
                 raise RuntimeError("Cannot send Willow audio after finish")
+            if self._finished.is_set():
+                # The session ended on its own (handshake failure or cancellation)
+                # while capture was still feeding it. Drop further audio quietly;
+                # the underlying error surfaces through wait_ready()/finish().
+                return
         self._enqueue(bytes(pcm), deadline=time.monotonic() + AUDIO_QUEUE_PUT_TIMEOUT)
 
     def finish(self) -> str:

@@ -153,18 +153,21 @@ def test_bridge_stop_during_model_load_cancels_cleanly():
     controller.shutdown()
 
 
-def test_bridge_stop_cancels_willow_handshake_before_recording():
-    session_created = threading.Event()
+def test_bridge_stop_while_willow_handshake_pending_cancels_cleanly():
+    # Capture now starts immediately, so a quick start+stop while Willow's
+    # handshake is still pending lands during recording. With no audio captured
+    # it must complete as a clean cancel (no error state), not a failure.
+    recorder_started = threading.Event()
+    allow_ready = threading.Event()
     cancelled = threading.Event()
-    recorder_called = False
 
     class StreamingSession:
         def wait_ready(self) -> None:
-            assert cancelled.wait(timeout=1)
+            allow_ready.wait(timeout=2)
             raise bridge_module.ModelError("MODEL_TRANSCRIBE_FAILED", "cancelled")
 
         def send_audio(self, pcm: bytes) -> None:
-            raise AssertionError("audio must not be sent before readiness")
+            return
 
         def finish(self) -> str:
             raise AssertionError("cancelled session must not finish")
@@ -174,16 +177,19 @@ def test_bridge_stop_cancels_willow_handshake_before_recording():
 
     class StreamingModel:
         def start_streaming(self) -> StreamingSession:
-            session_created.set()
             return StreamingSession()
 
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(*args, **kwargs):
-        nonlocal recorder_called
-        recorder_called = True
-        return b"audio"
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        recorder_started.set()
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        deadline = time.monotonic() + 2.0
+        while stop_requested is not None and not stop_requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return b""
 
     controller = DictationBridgeController(
         backend="willow",
@@ -194,11 +200,11 @@ def test_bridge_stop_cancels_willow_handshake_before_recording():
     )
 
     controller.start_session()
-    assert session_created.wait(timeout=1)
+    assert recorder_started.wait(timeout=1)
     stopped = controller.stop_session()
 
+    assert allow_ready.is_set() is False
     assert cancelled.is_set()
-    assert recorder_called is False
     assert stopped["state"] == "idle"
     assert stopped["last_transcript"]["metadata"]["cancelled_before_recording"] is True
 
@@ -332,13 +338,16 @@ def test_willow_bridge_streams_audio_while_recording(monkeypatch):
 
     controller.start_session()
     assert session_created.wait(timeout=1)
-    assert controller.get_session_payload()["state"] == "starting"
-    assert audio_sent.is_set() is False
+    # The microphone must open immediately and stream audio while the backend
+    # handshake is still pending; previously capture was blocked on wait_ready()
+    # and the first ~2s of speech was never recorded.
+    assert audio_sent.wait(timeout=1)
+    assert allow_ready.is_set() is False
+    recording = controller.get_session_payload()
+    assert recording["state"] == "recording"
+    assert recording["recording_started_at"] is not None
 
     allow_ready.set()
-    assert audio_sent.wait(timeout=1)
-    assert controller.get_session_payload()["state"] == "recording"
-
     completed = controller.stop_session()
 
     assert b"".join(sent_audio) == b"\x01\x00" * 1600
