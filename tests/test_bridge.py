@@ -211,6 +211,64 @@ def test_bridge_stop_while_willow_handshake_pending_cancels_cleanly():
     controller.shutdown()
 
 
+def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
+    recording_started = threading.Event()
+    cancelled = threading.Event()
+
+    class StreamingSession:
+        def wait_ready(self) -> None:
+            raise bridge_module.ModelError("MODEL_TRANSCRIBE_FAILED", "Willow handshake failed")
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            raise AssertionError("a session that failed readiness must not finish")
+
+        def cancel(self) -> None:
+            cancelled.set()
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        assert on_audio_chunk is not None
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    failed = controller.stop_session()
+
+    assert failed["state"] == "error"
+    assert failed["last_error"] == "MODEL_TRANSCRIBE_FAILED: Willow handshake failed"
+    assert failed["last_transcript"] is None
+    assert failed["history"] == []
+    assert cancelled.is_set()
+
+    controller.shutdown()
+
+
 def test_bridge_warms_whisper_before_accepting_recording(monkeypatch):
     warmup_started = threading.Event()
     release_warmup = threading.Event()
@@ -662,6 +720,89 @@ def test_bridge_server_health_and_session_endpoints():
             stopped = json.load(response)
         assert stopped["state"] == "idle"
         assert stopped["last_transcript"]["transcript"] == "fake transcript"
+    finally:
+        server.shutdown()
+        server.server_close()
+        controller.shutdown()
+        thread.join(timeout=1)
+
+
+def test_bridge_http_reports_willow_finish_failure(monkeypatch):
+    recording_started = threading.Event()
+
+    class StreamingSession:
+        def wait_ready(self) -> None:
+            return
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            raise bridge_module.ModelError("MODEL_TRANSCRIBE_FAILED", "Willow result timeout")
+
+        def cancel(self) -> None:
+            return
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        assert on_audio_chunk is not None
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=1.0,
+    )
+    server = bridge_module.make_bridge_server("127.0.0.1", 0, controller=controller)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+
+    try:
+        start_request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/session/start",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(start_request, timeout=2) as response:
+            assert json.load(response)["state"] == "starting"
+        assert recording_started.wait(timeout=1)
+
+        stop_request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/session/toggle",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(stop_request, timeout=3)
+        except urllib.error.HTTPError as error:
+            assert error.code == 500
+            failed = json.load(error)
+        else:
+            raise AssertionError("Willow finalization failures must not return HTTP 200")
+
+        assert failed["state"] == "error"
+        assert failed["last_error"] == "MODEL_TRANSCRIBE_FAILED: Willow result timeout"
+        assert failed["history"] == []
     finally:
         server.shutdown()
         server.server_close()

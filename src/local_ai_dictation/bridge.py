@@ -543,14 +543,7 @@ class DictationBridgeController:
                 # it completed (and surface its error) before finalizing. For
                 # Whisper this is instantaneous; for Willow it normally finished
                 # while the user was still speaking.
-                try:
-                    streaming_session.wait_ready()
-                except ModelError:
-                    if self._stop_requested.is_set() or self._shutdown_requested.is_set():
-                        streaming_session.cancel()
-                        self._complete_cancelled_before_recording()
-                        return
-                    raise
+                streaming_session.wait_ready()
                 if has_probable_speech(infer_audio_data, 16000, vad_mode=config.vad_mode):
                     self._append_diagnostic("🤖 Generating...")
                     transcript_text = streaming_session.finish()
@@ -584,12 +577,14 @@ class DictationBridgeController:
                 self._dispatch_paste(transcription)
             self._complete_session(transcription)
         except ModelError as exc:
+            self._append_diagnostic(f"Session error: {exc}")
             with self._lock:
                 self._last_error = str(exc)
                 self._state = "error"
                 self._started_at = None
             self._notify_status()
         except Exception as exc:  # pragma: no cover - defensive runtime guard
+            self._append_diagnostic(f"Session error: {exc}")
             with self._lock:
                 self._last_error = str(exc)
                 self._state = "error"
@@ -809,13 +804,13 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/session/start":
-                self._write_json(200, self.controller.start_session())
+                self._write_session_response(self.controller.start_session())
                 return
             if parsed.path == "/session/stop":
-                self._write_json(200, self.controller.stop_session())
+                self._write_session_response(self.controller.stop_session())
                 return
             if parsed.path == "/session/toggle":
-                self._write_json(200, self.controller.toggle_session())
+                self._write_session_response(self.controller.toggle_session())
                 return
             if parsed.path == "/session/clear-history":
                 self._write_json(200, self.controller.clear_history())
@@ -842,6 +837,10 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _write_session_response(self, payload: dict[str, Any]) -> None:
+        status = 500 if payload.get("state") == "error" else 200
+        self._write_json(status, payload)
 
     def _write_events(self) -> None:
         self.send_response(200)
