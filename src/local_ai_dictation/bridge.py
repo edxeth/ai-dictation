@@ -26,7 +26,7 @@ from local_ai_dictation.dictation import (
     save_audio,
 )
 from local_ai_dictation.doctor import collect_doctor_report
-from local_ai_dictation.errors import ExitCode, ModelError
+from local_ai_dictation.errors import ExitCode, MODEL_TRANSCRIBE_FAILED, ModelError
 from local_ai_dictation.output import copy_transcript_to_clipboard, render_transcription
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
@@ -36,6 +36,7 @@ DEFAULT_E2E_TRANSCRIPT = "AI Dictation deterministic E2E transcript"
 DIAGNOSTIC_RAW_FILENAME = "last-capture-raw.wav"
 DIAGNOSTIC_MODEL_INPUT_FILENAME = "last-capture-16k.wav"
 HYPRCTL_TIMEOUT_SECONDS = 0.25
+WILLOW_STREAMING_RETRY_LIMIT = 1
 
 
 def _build_hyprland_paste_notifier(env: Mapping[str, str]) -> Callable[[], bool] | None:
@@ -543,28 +544,46 @@ class DictationBridgeController:
                 # it completed (and surface its error) before finalizing. For
                 # Whisper this is instantaneous; for Willow it normally finished
                 # while the user was still speaking.
-                streaming_session.wait_ready()
-                if has_probable_speech(infer_audio_data, 16000, vad_mode=config.vad_mode):
-                    self._append_diagnostic("🤖 Generating...")
-                    transcript_text = streaming_session.finish()
-                    streaming_session = None
-                    transcription = TranscriptionResult(
-                        text=transcript_text,
-                        device=(
-                            "cloud"
-                            if config.backend == "willow"
-                            else getattr(self._model, "_parakeet_device", None)
-                        ),
-                        metadata={"backend": config.backend},
-                    )
-                else:
-                    streaming_session.cancel()
-                    self._wait_for_streaming_session(streaming_session)
-                    streaming_session = None
-                    transcription = TranscriptionResult(
-                        text="",
-                        metadata={"backend": config.backend, "silence_filtered": True},
-                    )
+                streaming_attempt = 0
+                while True:
+                    try:
+                        streaming_session.wait_ready()
+                        if has_probable_speech(infer_audio_data, 16000, vad_mode=config.vad_mode):
+                            self._append_diagnostic("🤖 Generating...")
+                            transcript_text = streaming_session.finish()
+                            streaming_session = None
+                            transcription = TranscriptionResult(
+                                text=transcript_text,
+                                device=(
+                                    "cloud"
+                                    if config.backend == "willow"
+                                    else getattr(self._model, "_parakeet_device", None)
+                                ),
+                                metadata={"backend": config.backend},
+                            )
+                        else:
+                            streaming_session.cancel()
+                            self._wait_for_streaming_session(streaming_session)
+                            streaming_session = None
+                            transcription = TranscriptionResult(
+                                text="",
+                                metadata={"backend": config.backend, "silence_filtered": True},
+                            )
+                        break
+                    except ModelError as exc:
+                        if not self._should_retry_streaming_error(config, exc, streaming_attempt):
+                            raise
+                        streaming_attempt += 1
+                        self._append_diagnostic(
+                            f"Willow connection failed; retrying transcription ({streaming_attempt}/{WILLOW_STREAMING_RETRY_LIMIT})"
+                        )
+                        streaming_session.cancel()
+                        self._wait_for_streaming_session(streaming_session)
+                        streaming_session = self._model.start_streaming()
+                        with self._lock:
+                            self._active_streaming_session = streaming_session
+                        streaming_session.wait_ready()
+                        streaming_session.send_audio(infer_audio_data)
             else:
                 transcription, temp_path, _infer_start, _infer_end = self._transcriber(
                     config,
@@ -609,6 +628,27 @@ class DictationBridgeController:
         wait_finished = getattr(streaming_session, "wait_finished", None)
         if callable(wait_finished):
             wait_finished()
+
+    @staticmethod
+    def _should_retry_streaming_error(
+        config: DictationConfig,
+        error: ModelError,
+        attempt: int,
+    ) -> bool:
+        if config.backend != "willow" or attempt >= WILLOW_STREAMING_RETRY_LIMIT:
+            return False
+        if error.code != MODEL_TRANSCRIBE_FAILED:
+            return False
+        message = error.message.lower()
+        return any(
+            marker in message
+            for marker in (
+                "handshake",
+                "timed out",
+                "connection",
+                "network",
+            )
+        )
 
     @staticmethod
     def _save_diagnostic_audio(audio_data: bytes, path: Path, sample_rate: int) -> None:

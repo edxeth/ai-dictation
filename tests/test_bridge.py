@@ -269,6 +269,77 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
     controller.shutdown()
 
 
+def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
+    recording_started = threading.Event()
+    sessions: list[Any] = []
+
+    class StreamingSession:
+        def __init__(self, *, fail_ready: bool):
+            self.fail_ready = fail_ready
+            self.sent_audio: list[bytes] = []
+            self.cancelled = False
+
+        def wait_ready(self) -> None:
+            if self.fail_ready:
+                raise bridge_module.ModelError(
+                    "MODEL_TRANSCRIBE_FAILED",
+                    "Willow transcription failed: _ssl.c:993: The handshake operation timed out",
+                )
+
+        def send_audio(self, pcm: bytes) -> None:
+            self.sent_audio.append(pcm)
+
+        def finish(self) -> str:
+            return "retried transcript"
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            session = StreamingSession(fail_ready=not sessions)
+            sessions.append(session)
+            return session
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        assert on_audio_chunk is not None
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    completed = controller.stop_session()
+
+    assert completed["state"] == "idle"
+    assert completed["last_error"] is None
+    assert completed["last_transcript"]["transcript"] == "retried transcript"
+    assert len(sessions) == 2
+    assert sessions[0].cancelled is True
+    assert sessions[1].sent_audio == [b"\x01\x00" * 1600]
+    assert any("retrying" in line.lower() for line in completed["stderr_tail"])
+
+    controller.shutdown()
+
+
 def test_bridge_warms_whisper_before_accepting_recording(monkeypatch):
     warmup_started = threading.Event()
     release_warmup = threading.Event()
