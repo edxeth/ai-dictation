@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import wave
 
 from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
@@ -131,7 +132,11 @@ def load_engine(config: DictationConfig) -> TranscriptionEngine:
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
 
-    device = "cpu" if config.cpu or not torch_module.cuda.is_available() else "cuda"
+    device = (
+        "cpu"
+        if config.cpu or not nvidia_driver_loaded() or not torch_module.cuda.is_available()
+        else "cuda"
+    )
     engine.to(device)
     engine.eval()
     setattr(engine, "_parakeet_device", device)

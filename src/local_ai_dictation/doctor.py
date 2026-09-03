@@ -21,6 +21,7 @@ from local_ai_dictation.errors import (
     MODEL_IMPORT_FAILED,
     ExitCode,
 )
+from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.model import MODEL_ID, check_model_cache
 from local_ai_dictation.types import AudioDevice, DoctorIssue, DoctorReport
 
@@ -111,7 +112,7 @@ def _collect_cuda_status() -> dict[str, Any]:
         }
 
     try:
-        available = bool(torch.cuda.is_available())
+        available = nvidia_driver_loaded() and bool(torch.cuda.is_available())
     except Exception as exc:
         return {
             "available": False,

@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
@@ -366,7 +367,11 @@ def _load_runtime_dependencies() -> tuple[Any, Any]:
 
 
 def _compute_type(config: DictationConfig, torch_module: Any) -> tuple[str, str]:
-    use_cuda = bool(getattr(torch_module.cuda, "is_available", lambda: False)()) and not config.cpu
+    use_cuda = (
+        nvidia_driver_loaded()
+        and bool(getattr(torch_module.cuda, "is_available", lambda: False)())
+        and not config.cpu
+    )
     if use_cuda:
         return "cuda", "float16"
     return "cpu", "int8"

@@ -36,7 +36,7 @@ class _ClipboardSuccess:
 class _FakeTorchCuda:
     @staticmethod
     def is_available() -> bool:
-        return False
+        raise AssertionError("torch CUDA must not be queried without a loaded NVIDIA driver")
 
 
 class _FakeTorch:
@@ -137,6 +137,7 @@ def test_transcribe_once_skips_model_inference_for_silence(monkeypatch):
 def test_dictation_json_mode_keeps_status_off_stdout(monkeypatch, capsys):
     waits = iter([True, False])
     dictation_module._shutdown_event.clear()
+    monkeypatch.setattr(dictation_module, "nvidia_driver_loaded", lambda: False)
 
     monkeypatch.setattr(
         "local_ai_dictation.dictation._load_runtime_dependencies",

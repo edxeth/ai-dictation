@@ -46,6 +46,7 @@ from local_ai_dictation.errors import (
     ExitCode,
     ModelError,
 )
+from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.output import emit_transcription_result
 from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
@@ -644,7 +645,7 @@ def _load_model(
             if config.backend == "whisper":
                 from local_ai_dictation.whisper import WHISPER_MODEL_ID, WhisperEngine
 
-                use_cuda = torch_module.cuda.is_available() and not config.cpu
+                use_cuda = nvidia_driver_loaded() and torch_module.cuda.is_available() and not config.cpu
                 device = "cuda" if use_cuda else "cpu"
                 compute_type = "float16" if use_cuda else "int8"
                 model = WhisperEngine(
@@ -655,7 +656,7 @@ def _load_model(
                 )
             elif config.backend == "parakeet":
                 model = runtime_module.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
-                use_cuda = torch_module.cuda.is_available() and not config.cpu
+                use_cuda = nvidia_driver_loaded() and torch_module.cuda.is_available() and not config.cpu
                 device = "cuda" if use_cuda else "cpu"
                 model.to(device)
                 model.eval()
@@ -831,7 +832,7 @@ def run_dictation(args: argparse.Namespace) -> int:
         print("🚀 LOCAL AI DICTATION · PARAKEET TDT 0.6B V3", file=status_stream)
     else:
         print("☁️ LOCAL AI DICTATION · WILLOW VOICE FRONTIER (SERVER-SELECTED)", file=status_stream)
-    if torch_module.cuda.is_available():
+    if nvidia_driver_loaded() and torch_module.cuda.is_available():
         print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}", file=status_stream)
     print("=" * 60, file=status_stream)
     print("📝 Press ENTER to start → Speak → Press ENTER to stop", file=status_stream)
