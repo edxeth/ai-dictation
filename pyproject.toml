@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-ai-dictation"
-version = "1.1.1"
+version = "1.1.2"
 description = "AI voice dictation with local and cloud backends and a desktop GUI"
 readme = "README.md"
 requires-python = ">=3.10"
