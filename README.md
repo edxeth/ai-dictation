@@ -343,6 +343,13 @@ The compositor shortcut is the reliable global activation path on Wayland.
 The Electrobun window's `Ctrl+Alt+R` fallback works only while the window is
 focused unless a desktop portal/global-shortcut implementation is available.
 
+When the Willow session expires, the hotkey script sends a critical
+"Willow session expired" notification instead of a raw bridge error. Clicking
+the notification's action copies `local-ai-dictation willow-session login`
+to the clipboard so the sign-in command can be pasted straight into a terminal
+(requires libnotify >= 0.8, a notification daemon with action support such as
+dunst, and wl-clipboard or xclip).
+
 ### Waybar configuration
 
 ```jsonc

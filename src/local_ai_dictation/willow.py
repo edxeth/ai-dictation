@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-import getpass
 import hashlib
 import json
 import os
@@ -31,7 +30,12 @@ import msgpack
 from websockets.exceptions import ConnectionClosedOK
 from websockets.sync.client import connect
 
-from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.errors import (
+    MODEL_IMPORT_FAILED,
+    MODEL_TRANSCRIBE_FAILED,
+    WILLOW_AUTH_REQUIRED,
+    ModelError,
+)
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
@@ -123,7 +127,10 @@ def _find_session(value: Any) -> WillowSession | None:
 
 def _write_owned_session(session: WillowSession, path: Path) -> None:
     if not session.refresh_token:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow session does not contain a refresh token")
+        raise ModelError(
+            WILLOW_AUTH_REQUIRED,
+            "Willow session does not contain a refresh token; run `local-ai-dictation willow-session login` to create a refreshable session",
+        )
     payload = {
         "access_token": session.access_token,
         "refresh_token": session.refresh_token,
@@ -256,7 +263,9 @@ def login_google_session(*, env: Mapping[str, str] | None = None) -> Path:
         file=sys.stderr,
     )
     try:
-        callback_url = getpass.getpass("").strip()
+        # Plain input() (not getpass) so the pasted callback URL is echoed in
+        # plaintext and the user can verify it pasted correctly.
+        callback_url = input("Callback URL: ").strip()
     except EOFError as exc:
         raise ModelError(MODEL_IMPORT_FAILED, "Willow login callback was not provided") from exc
     session = _exchange_oauth_code(_oauth_callback_code(callback_url), code_verifier)
@@ -283,7 +292,7 @@ def load_session(
         payload = json.loads(resolved_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ModelError(
-            MODEL_IMPORT_FAILED,
+            WILLOW_AUTH_REQUIRED,
             f"Willow session required. Run `local-ai-dictation willow-session login` or import a session. Session not found at {resolved_path}",
         ) from exc
     except (OSError, json.JSONDecodeError) as exc:
@@ -291,7 +300,7 @@ def load_session(
 
     found = _find_session(payload)
     if found is None:
-        raise ModelError(MODEL_IMPORT_FAILED, f"Willow session at {resolved_path} does not contain an access token")
+        raise ModelError(WILLOW_AUTH_REQUIRED, f"Willow session at {resolved_path} does not contain an access token; log in again with `local-ai-dictation willow-session login`")
     if path is None and resolved_path == legacy_session_path(source):
         _write_owned_session(found, session_path(source))
     return found
@@ -299,7 +308,7 @@ def load_session(
 
 def _refresh_session(session: WillowSession) -> WillowSession:
     if not session.refresh_token:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
+        raise ModelError(WILLOW_AUTH_REQUIRED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
     request = Request(
         SUPABASE_TOKEN_URL,
         data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
@@ -314,6 +323,11 @@ def _refresh_session(session: WillowSession) -> WillowSession:
         with urlopen(request, timeout=8.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
+        if exc.code in (400, 401):
+            raise ModelError(
+                WILLOW_AUTH_REQUIRED,
+                f"Willow session expired. Run `local-ai-dictation willow-session login` ({_http_error_message(exc)})",
+            ) from exc
         raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {_http_error_message(exc)}") from exc
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {exc}") from exc
@@ -808,7 +822,7 @@ def check_model_cache(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     try:
         session = load_session(env=env)
         if session.expires_at is not None and session.expires_at <= time.time() + 60 and not session.refresh_token:
-            raise ModelError(MODEL_IMPORT_FAILED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
+            raise ModelError(WILLOW_AUTH_REQUIRED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
         ready = True
         error = None
     except ModelError as exc:

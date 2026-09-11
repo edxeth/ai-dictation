@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 import threading
 import time
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 import wave
 
@@ -15,6 +17,7 @@ from websockets.sync.server import serve
 
 import local_ai_dictation.cli as cli_module
 from local_ai_dictation.cli import main
+from local_ai_dictation.errors import ModelError
 from local_ai_dictation.types import DictationConfig
 import local_ai_dictation.willow as willow_module
 from local_ai_dictation.willow import (
@@ -162,9 +165,9 @@ def test_willow_session_login_cli_completes_google_pkce_and_writes_private_sessi
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
     monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
     monkeypatch.setattr(willow_module, "urlopen", fake_urlopen)
+    # Plain input() so the pasted callback URL echoes in plaintext.
     monkeypatch.setattr(
-        willow_module.getpass,
-        "getpass",
+        "builtins.input",
         lambda prompt: "https://willowvoice.com/success-open-app?code=oauth-code",
     )
     monkeypatch.setattr(cli_module, "_find_bridge_pids", lambda host, port: [123])
@@ -239,8 +242,7 @@ def test_willow_session_login_rejects_callback_from_another_host(tmp_path: Path,
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: True)
     monkeypatch.setattr(
-        willow_module.getpass,
-        "getpass",
+        "builtins.input",
         lambda prompt: "https://attacker.example/success-open-app?code=stolen-code",
     )
     monkeypatch.setattr(
@@ -288,6 +290,47 @@ def test_refresh_response_converts_expires_in_to_absolute_expiry(monkeypatch):
     )
 
     assert refreshed.expires_at == 4_600.0
+
+
+def test_rejected_refresh_token_is_reported_as_auth_required(monkeypatch):
+    def refused(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            None,
+            io.BytesIO(b'{"error":"Invalid Refresh Token: refresh token has expired"}'),
+        )
+
+    monkeypatch.setattr(willow_module, "urlopen", refused)
+
+    with pytest.raises(ModelError) as excinfo:
+        willow_module._refresh_session(WillowSession("old-token", "user-123", "old-refresh", 1.0))
+
+    assert excinfo.value.code == "WILLOW_AUTH_REQUIRED"
+    assert "willow-session login" in excinfo.value.message
+    assert "Invalid Refresh Token" in excinfo.value.message
+
+
+def test_refresh_server_error_stays_a_transparent_refresh_failure(monkeypatch):
+    def unavailable(request, timeout):
+        raise HTTPError(request.full_url, 503, "Service Unavailable", None, io.BytesIO(b""))
+
+    monkeypatch.setattr(willow_module, "urlopen", unavailable)
+
+    with pytest.raises(ModelError) as excinfo:
+        willow_module._refresh_session(WillowSession("old-token", "user-123", "old-refresh", 1.0))
+
+    assert excinfo.value.code == "MODEL_IMPORT_FAILED"
+    assert "Could not refresh Willow login" in excinfo.value.message
+
+
+def test_missing_session_file_is_reported_as_auth_required(tmp_path: Path):
+    with pytest.raises(ModelError) as excinfo:
+        load_session(env={"HOME": str(tmp_path)})
+
+    assert excinfo.value.code == "WILLOW_AUTH_REQUIRED"
+    assert "willow-session login" in excinfo.value.message
 
 
 def test_expired_session_is_refreshed_and_persisted(tmp_path: Path, monkeypatch):
@@ -702,6 +745,7 @@ def test_check_model_cache_rejects_expired_unrefreshable_session(tmp_path: Path)
 
     assert status["import_ready"] is False
     assert "refresh token" in status["import_error"]
+    assert "willow-session login" in status["import_error"]
 
 
 def test_willow_engine_requires_a_session(monkeypatch):

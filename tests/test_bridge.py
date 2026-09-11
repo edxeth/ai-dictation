@@ -262,11 +262,96 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
 
     assert failed["state"] == "error"
     assert failed["last_error"] == "MODEL_TRANSCRIBE_FAILED: Willow handshake failed"
+    assert failed["last_error_code"] == "MODEL_TRANSCRIBE_FAILED"
+    assert failed["auth_required"] is False
     assert failed["last_transcript"] is None
     assert failed["history"] == []
     assert cancelled.is_set()
 
     controller.shutdown()
+
+
+def test_bridge_marks_willow_auth_failure_as_auth_required(monkeypatch):
+    recording_started = threading.Event()
+    cancelled = threading.Event()
+
+    class StreamingSession:
+        def wait_ready(self) -> None:
+            raise bridge_module.ModelError(
+                "WILLOW_AUTH_REQUIRED",
+                "Willow session expired. Run `local-ai-dictation willow-session login` (HTTP 400: Invalid Refresh Token)",
+            )
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            raise AssertionError("a session that failed readiness must not finish")
+
+        def cancel(self) -> None:
+            cancelled.set()
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        assert on_audio_chunk is not None
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    failed = controller.stop_session()
+
+    assert failed["state"] == "error"
+    assert failed["last_error_code"] == "WILLOW_AUTH_REQUIRED"
+    assert failed["auth_required"] is True
+    assert "willow-session login" in failed["last_error"]
+
+    controller.shutdown()
+
+
+def test_bridge_warmup_auth_failure_marks_health_auth_required():
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        raise bridge_module.ModelError(
+            "WILLOW_AUTH_REQUIRED",
+            "Willow session required. Run `local-ai-dictation willow-session login`",
+        )
+
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        transcript_timeout=1.0,
+    )
+    controller.start_model_warmup()
+    assert controller._warmup_thread is not None
+    controller._warmup_thread.join(timeout=2)
+
+    payload = controller.get_session_payload()
+    assert payload["state"] == "stopped"
+    assert payload["auth_required"] is True
+    assert payload["last_error_code"] == "WILLOW_AUTH_REQUIRED"
 
 
 def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):

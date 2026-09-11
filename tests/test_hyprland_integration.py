@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,36 @@ class _FailedToggleHandler(BaseHTTPRequestHandler):
             {
                 "state": "error",
                 "last_error": "MODEL_TRANSCRIBE_FAILED: Willow result timeout",
+            }
+        ).encode("utf-8")
+        self.send_response(500)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args: object) -> None:
+        return
+
+
+class _AuthFailureHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler interface
+        body = json.dumps({"ok": True, "bridge": {"model_loading": False}}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler interface
+        body = json.dumps(
+            {
+                "state": "error",
+                "last_error": (
+                    "WILLOW_AUTH_REQUIRED: Willow session expired. Run `local-ai-dictation willow-session login` "
+                    "(HTTP 400: Invalid Refresh Token)"
+                ),
+                "last_error_code": "WILLOW_AUTH_REQUIRED",
+                "auth_required": True,
             }
         ).encode("utf-8")
         self.send_response(500)
@@ -154,3 +185,79 @@ def test_hyprland_toggle_waits_for_bridge_warmup(tmp_path: Path):
     assert result.returncode == 0
     assert state.health_requests >= 3
     assert state.post_before_ready is False
+
+
+def test_hyprland_toggle_auth_failure_notification_copies_login_command(tmp_path: Path):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AuthFailureHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    notify_stub = stub_bin / "notify-send"
+    notify_stub.write_text(
+        "\n".join(
+            [
+                "#!/bin/bash",
+                'printf "%s " "$@" >> "$STUB_LOG/notify-send.args"',
+                'echo >> "$STUB_LOG/notify-send.args"',
+                "echo copy",
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    notify_stub.chmod(0o755)
+    wl_copy_stub = stub_bin / "wl-copy"
+    wl_copy_stub.write_text(
+        "\n".join(
+            [
+                "#!/bin/bash",
+                'cat > "$STUB_LOG/clipboard"',
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    wl_copy_stub.chmod(0o755)
+
+    state_home = tmp_path / "state"
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path / "home"),
+            "PATH": f"{stub_bin}:/bin",
+            "XDG_STATE_HOME": str(state_home),
+            "STUB_LOG": str(tmp_path),
+            "LOCAL_AI_DICTATION_BRIDGE_URL": f"http://127.0.0.1:{server.server_address[1]}",
+            "LOCAL_AI_DICTATION_BRIDGE_LAUNCHER": str(tmp_path / "missing-bridge"),
+        }
+    )
+
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(TOGGLE_SCRIPT)],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    assert result.returncode == 1
+    assert "WILLOW_AUTH_REQUIRED" in result.stderr
+
+    clipboard = tmp_path / "clipboard"
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not clipboard.exists():
+        time.sleep(0.05)
+    assert clipboard.read_text(encoding="utf-8") == "local-ai-dictation willow-session login"
+
+    notify_args = (tmp_path / "notify-send.args").read_text(encoding="utf-8")
+    assert "--action" in notify_args
+    assert "copy=Copy sign-in command" in notify_args
+    assert "Willow session expired" in notify_args
+    assert "Sign in again. Click to copy: local-ai-dictation willow-session login" in notify_args

@@ -26,7 +26,7 @@ from local_ai_dictation.dictation import (
     save_audio,
 )
 from local_ai_dictation.doctor import collect_doctor_report
-from local_ai_dictation.errors import ExitCode, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.errors import ExitCode, MODEL_TRANSCRIBE_FAILED, WILLOW_AUTH_REQUIRED, ModelError
 from local_ai_dictation.output import copy_transcript_to_clipboard, render_transcription
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
@@ -195,6 +195,7 @@ class DictationBridgeController:
         self._paste_dispatched_at: float | None = None
         self._last_transcript: dict[str, Any] | None = None
         self._last_error: str | None = None
+        self._last_error_code: str | None = None
         self._stderr_tail: list[str] = []
         self._history: list[dict[str, Any]] = []
 
@@ -309,9 +310,14 @@ class DictationBridgeController:
 
             self._append_diagnostic("Warming model")
             warmup_model(self._model)
+        except ModelError as exc:
+            with self._lock:
+                self._last_error = str(exc)
+                self._last_error_code = exc.code
         except Exception as exc:  # pragma: no cover - defensive warmup guard
             with self._lock:
                 self._last_error = str(exc)
+                self._last_error_code = None
         finally:
             with self._lock:
                 self._model_loading = False
@@ -323,6 +329,7 @@ class DictationBridgeController:
                 return
             self._model_loading = True
             self._last_error = None
+            self._last_error_code = None
             self._warmup_thread = threading.Thread(target=self._warmup_worker, daemon=True)
             self._warmup_thread.start()
         self._notify_status()
@@ -339,6 +346,7 @@ class DictationBridgeController:
             self._last_transcript = payload
             self._last_completed_at = completed_at
             self._last_error = None
+            self._last_error_code = None
             self._state = "idle"
             self._started_at = None
             self._history.append(history_item)
@@ -351,6 +359,7 @@ class DictationBridgeController:
                 self._state = "idle"
                 self._started_at = None
                 self._last_error = None
+                self._last_error_code = None
                 should_notify = True
         if should_notify:
             self._notify_status()
@@ -599,6 +608,7 @@ class DictationBridgeController:
             self._append_diagnostic(f"Session error: {exc}")
             with self._lock:
                 self._last_error = str(exc)
+                self._last_error_code = exc.code
                 self._state = "error"
                 self._started_at = None
             self._notify_status()
@@ -606,6 +616,7 @@ class DictationBridgeController:
             self._append_diagnostic(f"Session error: {exc}")
             with self._lock:
                 self._last_error = str(exc)
+                self._last_error_code = None
                 self._state = "error"
                 self._started_at = None
             self._notify_status()
@@ -688,6 +699,7 @@ class DictationBridgeController:
             self._clipboard_copied_at = None
             self._paste_dispatched_at = None
             self._last_error = None
+            self._last_error_code = None
             self._session_thread = threading.Thread(target=self._session_worker, daemon=True)
             self._session_thread.start()
             payload = self.get_session_payload()
@@ -723,6 +735,7 @@ class DictationBridgeController:
             with self._lock:
                 self._state = "error"
                 self._last_error = "Timed out waiting for session to stop"
+                self._last_error_code = None
             self._notify_status()
             raise TimeoutError(self._last_error)
         return self.get_session_payload()
@@ -787,6 +800,8 @@ class DictationBridgeController:
                 "paste_dispatched_at": self._paste_dispatched_at,
                 "last_transcript": self._last_transcript,
                 "last_error": self._last_error,
+                "last_error_code": self._last_error_code,
+                "auth_required": self._last_error_code == WILLOW_AUTH_REQUIRED,
                 "model_loaded": self._model_loaded,
                 "model_loading": self._model_loading,
                 "history": list(self._history),
