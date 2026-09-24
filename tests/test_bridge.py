@@ -253,7 +253,7 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
         model_loader=model_loader,
         recorder=recorder,
         clipboard=False,
-        transcript_timeout=1.0,
+        transcript_timeout=5.0,
     )
 
     controller.start_session()
@@ -407,7 +407,7 @@ def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
         model_loader=model_loader,
         recorder=recorder,
         clipboard=False,
-        transcript_timeout=1.0,
+        transcript_timeout=5.0,
     )
 
     controller.start_session()
@@ -422,6 +422,289 @@ def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
     assert sessions[1].sent_audio == [b"\x01\x00" * 1600]
     assert any("retrying" in line.lower() for line in completed["stderr_tail"])
 
+    controller.shutdown()
+
+
+def test_willow_retry_policy_is_two_tries_then_twenty_seconds():
+    assert bridge_module.WILLOW_STREAMING_RETRY_LIMIT == 2
+    assert bridge_module.WILLOW_STREAMING_RETRY_DELAYS_S == (1.0, 2.0)
+    assert bridge_module.WILLOW_FINALIZE_DEADLINE_S == 20.0
+    config = bridge_module.DictationConfig(backend="willow")
+    dns_error = bridge_module.ModelError(
+        "MODEL_TRANSCRIBE_FAILED",
+        "Willow transcription failed: [Errno -2] Name or service not known",
+    )
+    auth_error = bridge_module.ModelError(
+        "MODEL_TRANSCRIBE_FAILED",
+        "Willow transcription failed: server rejected WebSocket connection: HTTP 401",
+    )
+
+    assert bridge_module.DictationBridgeController._should_retry_streaming_error(config, dns_error, 0)
+    assert bridge_module.DictationBridgeController._should_retry_streaming_error(config, auth_error, 0) is False
+
+
+def test_bridge_retries_willow_close_frame_then_returns_text(monkeypatch):
+    recording_started = threading.Event()
+    sessions: list[Any] = []
+    monkeypatch.setattr(bridge_module, "WILLOW_STREAMING_RETRY_DELAYS_S", (0.0, 0.0))
+
+    class StreamingSession:
+        def __init__(self, *, fail: bool):
+            self.fail = fail
+            self.sent_audio: list[bytes] = []
+            self.cancelled = False
+
+        def wait_ready(self) -> None:
+            return
+
+        def send_audio(self, pcm: bytes) -> None:
+            self.sent_audio.append(pcm)
+
+        def finish(self) -> str:
+            if self.fail:
+                raise bridge_module.ModelError(
+                    "MODEL_TRANSCRIBE_FAILED",
+                    "Willow transcription failed: no close frame received or sent",
+                )
+            return "kept the words"
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            session = StreamingSession(fail=len(sessions) < 2)
+            sessions.append(session)
+            return session
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=5.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    completed = controller.stop_session()
+
+    assert completed["state"] == "idle"
+    assert completed["last_transcript"]["transcript"] == "kept the words"
+    assert len(sessions) == 3
+    assert sessions[0].cancelled is True
+    assert sessions[1].cancelled is True
+    assert sessions[2].sent_audio == [b"\x01\x00" * 1600]
+
+    controller.shutdown()
+
+
+def test_bridge_finalize_deadline_frees_the_next_recording(monkeypatch):
+    recording_started = threading.Event()
+    monkeypatch.setattr(bridge_module, "WILLOW_FINALIZE_DEADLINE_S", 0.25)
+
+    class StreamingSession:
+        def __init__(self) -> None:
+            self.cancelled = threading.Event()
+
+        def wait_ready(self) -> None:
+            return
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            if not self.cancelled.wait(timeout=5):
+                raise AssertionError("finalize deadline did not cancel the hung Willow session")
+            raise bridge_module.ModelError(
+                "MODEL_TRANSCRIBE_FAILED",
+                "Willow transcription failed: no close frame received or sent",
+            )
+
+        def cancel(self) -> None:
+            self.cancelled.set()
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=3.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    failed = controller.stop_session()
+
+    assert failed["state"] == "error"
+    assert "Record again, or switch the model." in failed["last_error"]
+    assert controller._session_thread is not None
+    assert controller._session_thread.is_alive() is False
+
+    started = controller.start_session()
+    assert started["state"] == "starting"
+    controller.shutdown()
+
+
+def test_bridge_retries_when_the_second_connection_also_fails(monkeypatch):
+    recording_started = threading.Event()
+    sessions: list[Any] = []
+    monkeypatch.setattr(bridge_module, "WILLOW_STREAMING_RETRY_DELAYS_S", (0.0, 0.0))
+
+    class StreamingSession:
+        def __init__(self, index: int) -> None:
+            self.index = index
+            self.cancelled = False
+
+        def wait_ready(self) -> None:
+            if self.index == 1:
+                raise bridge_module.ModelError(
+                    "MODEL_TRANSCRIBE_FAILED",
+                    "Willow transcription failed: [Errno 111] Connection refused",
+                )
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            if self.index == 0:
+                raise bridge_module.ModelError(
+                    "MODEL_TRANSCRIBE_FAILED",
+                    "Willow transcription failed: no close frame received or sent",
+                )
+            return "third try kept the words"
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            session = StreamingSession(len(sessions))
+            sessions.append(session)
+            return session
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=5.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    completed = controller.stop_session()
+
+    assert len(sessions) == 3
+    assert completed["state"] == "idle"
+    assert completed["last_transcript"]["transcript"] == "third try kept the words"
+    controller.shutdown()
+
+
+def test_bridge_does_not_apply_willow_deadline_to_whisper(monkeypatch):
+    recording_started = threading.Event()
+    cancelled = threading.Event()
+    monkeypatch.setattr(bridge_module, "WILLOW_FINALIZE_DEADLINE_S", 0.05)
+
+    class StreamingSession:
+        def wait_ready(self) -> None:
+            return
+
+        def send_audio(self, pcm: bytes) -> None:
+            return
+
+        def finish(self) -> str:
+            time.sleep(0.2)
+            if cancelled.is_set():
+                raise AssertionError("Willow deadline cancelled a local Whisper transcription")
+            return "local transcript"
+
+        def cancel(self) -> None:
+            cancelled.set()
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+        if status_stream is not None:
+            status_stream.write("🎤 Recording...\n")
+        pcm = b"\x01\x00" * 1600
+        on_audio_chunk(pcm)
+        recording_started.set()
+        while stop_requested is not None and not stop_requested():
+            time.sleep(0.01)
+        return pcm
+
+    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    controller = DictationBridgeController(
+        backend="whisper",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=3.0,
+    )
+
+    controller.start_session()
+    assert recording_started.wait(timeout=1)
+    completed = controller.stop_session()
+
+    assert completed["state"] == "idle"
+    assert completed["last_transcript"]["transcript"] == "local transcript"
+    assert cancelled.is_set() is False
     controller.shutdown()
 
 

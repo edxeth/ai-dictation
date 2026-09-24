@@ -24,6 +24,8 @@ from local_ai_dictation.willow import (
     WillowEngine,
     WillowProtocol,
     WillowSession,
+    WillowStreamingSession,
+    _model_error_for_socket_failure,
     load_session,
     resolve_session_path,
     session_path,
@@ -460,6 +462,8 @@ def test_streaming_session_cancel_unblocks_readiness_during_connect(monkeypatch)
     assert cancel_elapsed < 0.2
     assert waiter.is_alive() is False
     assert ready_errors
+    session._thread.join(timeout=0.5)
+    assert session._thread.is_alive() is False
 
 
 def test_streaming_session_finish_unblocks_when_full_queue_is_cancelled(monkeypatch):
@@ -496,6 +500,32 @@ def test_streaming_session_finish_unblocks_when_full_queue_is_cancelled(monkeypa
 
     assert finisher.is_alive() is False
     assert finish_errors
+
+
+def test_finish_rejects_cancelled_empty_transcript():
+    engine = WillowEngine(access_token="test-token")
+    session = WillowStreamingSession.__new__(WillowStreamingSession)
+    session._engine = engine
+    session._cancelled = threading.Event()
+    session._cancelled.set()
+    session._finished = threading.Event()
+    session._finished.set()
+    session._finish_requested = True
+    session._state_lock = threading.Lock()
+    session._transcript = ""
+    session._error = None
+
+    with pytest.raises(ModelError, match="cancelled"):
+        session.finish()
+
+
+def test_socket_auth_rejection_is_not_a_transport_failure():
+    error = _model_error_for_socket_failure(
+        RuntimeError("server rejected WebSocket connection: HTTP 401")
+    )
+
+    assert error.code == "WILLOW_AUTH_REQUIRED"
+    assert "willow-session login" in error.message
 
 
 def test_wait_for_result_treats_normal_session_close_as_empty_transcript():

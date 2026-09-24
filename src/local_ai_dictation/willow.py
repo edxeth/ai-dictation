@@ -39,6 +39,17 @@ from local_ai_dictation.errors import (
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
+def _model_error_for_socket_failure(exc: Exception) -> ModelError:
+    text = str(exc)
+    lowered = text.lower()
+    if "http 401" in lowered or "http 403" in lowered:
+        return ModelError(
+            WILLOW_AUTH_REQUIRED,
+            f"Willow session expired. Run `local-ai-dictation willow-session login` ({text})",
+        )
+    return ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow transcription failed: {text}")
+
+
 PRODUCTION_TRANSCRIBE_URL = "wss://middleware.willowvoice.com/transcribe"
 SUPABASE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=refresh_token"
 SUPABASE_PKCE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=pkce"
@@ -515,7 +526,7 @@ class WillowStreamingSession:
         self._thread.start()
 
     def wait_ready(self) -> None:
-        deadline = time.monotonic() + self._engine._connect_timeout + 1.0
+        deadline = time.monotonic() + self._engine._bounded_timeout(self._engine._connect_timeout + 1.0)
         while not self._ready.is_set():
             if self._cancelled.is_set():
                 raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
@@ -543,7 +554,11 @@ class WillowStreamingSession:
         self._enqueue(bytes(pcm), deadline=time.monotonic() + AUDIO_QUEUE_PUT_TIMEOUT)
 
     def finish(self) -> str:
-        deadline = time.monotonic() + self._engine._connect_timeout + self._engine._result_timeout + 2.0
+        budget = self._engine._bounded_timeout(self._engine._connect_timeout + self._engine._result_timeout + 2.0)
+        if budget <= 0:
+            self.cancel()
+            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out waiting for Willow streaming transcription")
+        deadline = time.monotonic() + budget
         enqueue_finish = False
         with self._state_lock:
             if not self._finish_requested:
@@ -556,6 +571,8 @@ class WillowStreamingSession:
             self.cancel()
             raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out waiting for Willow streaming transcription")
         self._raise_if_failed()
+        if self._cancelled.is_set():
+            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
         return self._transcript or ""
 
     def cancel(self) -> None:
@@ -575,6 +592,42 @@ class WillowStreamingSession:
         except Exception:
             pass
         self._finished.wait(timeout=1.0)
+
+    def _open_socket_until_cancelled(self) -> Any:
+        holder: dict[str, Any] = {}
+
+        def attempt() -> None:
+            try:
+                opened = self._engine._open_socket()
+            except Exception as exc:
+                holder["error"] = exc
+                return
+            if self._cancelled.is_set():
+                try:
+                    opened.close()
+                except Exception:
+                    pass
+                return
+            holder["socket"] = opened
+
+        opener = threading.Thread(target=attempt, daemon=True)
+        opener.start()
+        while opener.is_alive():
+            if self._cancelled.is_set():
+                opener.join(timeout=0.05)
+                opened = holder.get("socket")
+                if opened is not None:
+                    try:
+                        opened.close()
+                    except Exception:
+                        pass
+                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+            opener.join(timeout=0.05)
+        if "error" in holder:
+            raise holder["error"]
+        if "socket" not in holder:
+            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+        return holder["socket"]
 
     def _raise_if_failed(self) -> None:
         if self._error is not None:
@@ -598,7 +651,7 @@ class WillowStreamingSession:
     def _run(self) -> None:
         try:
             self._engine._ensure_fresh_session()
-            socket = self._engine._open_socket()
+            socket = self._open_socket_until_cancelled()
             with self._socket_lock:
                 self._socket = socket
             with socket:
@@ -631,7 +684,7 @@ class WillowStreamingSession:
                 self._error = exc
         except Exception as exc:
             if not self._cancelled.is_set():
-                self._error = ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow transcription failed: {exc}")
+                self._error = _model_error_for_socket_failure(exc)
         finally:
             with self._socket_lock:
                 self._socket = None
@@ -661,6 +714,18 @@ class WillowEngine:
         self._refresh_token = refresh_token
         self._expires_at = expires_at
         self._session_file = session_file
+        self._operation_deadline: float | None = None
+
+    def set_operation_deadline(self, deadline: float | None) -> None:
+        self._operation_deadline = deadline
+
+    def _bounded_timeout(self, configured: float) -> float:
+        if self._operation_deadline is None:
+            return configured
+        remaining = self._operation_deadline - time.monotonic()
+        if remaining <= 0:
+            return 0.0
+        return min(configured, remaining)
 
     @classmethod
     def from_config(
@@ -713,16 +778,19 @@ class WillowEngine:
         if self._user_id:
             query["userID"] = self._user_id
         endpoint = f"{self._endpoint}{'&' if '?' in self._endpoint else '?'}{urlencode(query)}"
+        open_timeout = self._bounded_timeout(self._connect_timeout)
+        if open_timeout <= 0:
+            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out preparing Willow streaming session")
         return connect(
             endpoint,
             additional_headers={"Authorization": f"Bearer {self._access_token}"},
-            open_timeout=self._connect_timeout,
+            open_timeout=open_timeout,
             close_timeout=0.5,
         )
 
     def _initialize_realtime_socket(self, socket: Any, protocol: WillowProtocol) -> None:
         self._send(socket, protocol, "health_packet", {})
-        self._wait_for(socket, protocol, "health_packet", self._connect_timeout)
+        self._wait_for(socket, protocol, "health_packet", self._bounded_timeout(self._connect_timeout))
         for key, data in (
             ("selected_languages", []),
             ("glossary", []),

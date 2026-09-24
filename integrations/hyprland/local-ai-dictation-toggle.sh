@@ -39,13 +39,15 @@ notify_willow_session_expired() {
   fi
 }
 
+health_curl_max_time="${LOCAL_AI_DICTATION_HEALTH_CURL_MAX_TIME:-2}"
 bridge_available=0
-if ! curl -fsS "$bridge_url/health" >/dev/null 2>&1; then
+if ! curl --max-time "$health_curl_max_time" -fsS "$bridge_url/health" >/dev/null 2>&1; then
   if [ -x "$bridge_launcher" ]; then
     "$bridge_launcher" >/dev/null 2>&1 &
   fi
-  for _ in $(seq 1 40); do
-    if curl -fsS "$bridge_url/health" >/dev/null 2>&1; then
+  start_attempts="${LOCAL_AI_DICTATION_BRIDGE_START_ATTEMPTS:-40}"
+  for _ in $(seq 1 "$start_attempts"); do
+    if curl --max-time "$health_curl_max_time" -fsS "$bridge_url/health" >/dev/null 2>&1; then
       bridge_available=1
       break
     fi
@@ -57,7 +59,7 @@ fi
 
 if [ "$bridge_available" -eq 1 ]; then
   for _ in $(seq 1 480); do
-    health="$(curl -fsS "$bridge_url/health" 2>/dev/null || true)"
+    health="$(curl --max-time "$health_curl_max_time" -fsS "$bridge_url/health" 2>/dev/null || true)"
     if [ -n "$health" ] && ! printf '%s' "$health" | grep -Eq '"model_loading"[[:space:]]*:[[:space:]]*true'; then
       break
     fi
@@ -65,14 +67,23 @@ if [ "$bridge_available" -eq 1 ]; then
   done
 fi
 
-if ! response="$(curl --fail-with-body -sS --request POST "$bridge_url/session/toggle" 2>&1)"; then
+toggle_curl_max_time="${LOCAL_AI_DICTATION_TOGGLE_CURL_MAX_TIME:-25}"
+curl_status=0
+response="$(curl --max-time "$toggle_curl_max_time" --fail-with-body -sS --request POST "$bridge_url/session/toggle" 2>&1)" || curl_status=$?
+if [ "$curl_status" -ne 0 ]; then
   compact_response="${response//$'\n'/ }"
   printf '%s toggle failed: %s\n' "$(date --iso-8601=seconds)" "$compact_response" >> "$log_file"
+  if printf '%s' "$response" | grep -Eq 'still transcribing|still winding down'; then
+    printf '%s\n' "$response" >&2
+    exit 1
+  fi
   if command -v notify-send >/dev/null 2>&1; then
     if printf '%s' "$response" | grep -Eq '"auth_required"[[:space:]]*:[[:space:]]*true'; then
       notify_willow_session_expired >/dev/null 2>&1 &
+    elif [ "$curl_status" -eq 28 ]; then
+      notify-send "AI Dictation" "The recording took too long and was stopped. Press Super+R to try again, or switch the model." >/dev/null 2>&1 || true
     else
-      notify-send "AI Dictation" "Recording failed: ${compact_response:0:240}" >/dev/null 2>&1 || true
+      notify-send "AI Dictation" "The connection to Willow failed, so the text was not pasted. Press Super+R to try again, or switch the model." >/dev/null 2>&1 || true
     fi
   fi
   printf '%s\n' "$response" >&2
