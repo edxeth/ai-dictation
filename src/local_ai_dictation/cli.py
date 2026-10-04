@@ -3,31 +3,42 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from dataclasses import asdict
+from pathlib import Path
 from typing import Sequence
 from urllib.error import URLError
 from urllib.request import urlopen
 
 from local_ai_dictation.audio import list_input_devices
-from local_ai_dictation.backend_state import backend_payload, get_backend, set_backend, toggle_backend
+from local_ai_dictation.backend_state import (
+    backend_payload,
+    get_backend,
+    set_backend,
+    toggle_backend,
+)
 from local_ai_dictation.benchmark import run_benchmark_command
 from local_ai_dictation.bridge import run_bridge_server
 from local_ai_dictation.dictation import add_cli_arguments
-from local_ai_dictation.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
+from local_ai_dictation.doctor import (
+    collect_doctor_report,
+    doctor_exit_code,
+    render_doctor_text,
+)
 
 
 def _bridge_health_url(host: str, port: int) -> str:
     return f"http://{host}:{port}/health"
 
 
-def _wait_for_bridge_ready(host: str, port: int, *, timeout_seconds: float = 10.0) -> bool:
+def _wait_for_bridge_ready(
+    host: str, port: int, *, timeout_seconds: float = 10.0
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
@@ -46,11 +57,15 @@ def _find_bridge_pids(host: str, port: int) -> list[int]:
         f"-m local_ai_dictation.cli bridge .*--host {host} --port {port}",
     ]
     if host == "127.0.0.1" and port == 8765:
-        patterns.append(str(Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"))
+        patterns.append(
+            str(Path.home() / ".local" / "bin" / "local-ai-dictation-bridge")
+        )
     current_pid = os.getpid()
     pids: list[int] = []
     for pattern in patterns:
-        completed = subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True, text=True, check=False)
+        completed = subprocess.run(
+            ["pgrep", "-f", "--", pattern], capture_output=True, text=True, check=False
+        )
         if completed.returncode not in {0, 1}:
             continue
         for line in completed.stdout.splitlines():
@@ -92,7 +107,16 @@ def _restart_local_bridge(host: str, port: int) -> None:
     if launcher.exists() and host == "127.0.0.1" and port == 8765:
         command = [str(launcher)]
     else:
-        command = [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", host, "--port", str(port)]
+        command = [
+            sys.executable,
+            "-m",
+            "local_ai_dictation.cli",
+            "bridge",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ]
     subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
@@ -486,7 +510,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Optional localhost port for the packaged GUI automation server.",
     )
-    gui_package_automation_parser.set_defaults(handler=_run_gui_package_automation_namespace)
+    gui_package_automation_parser.set_defaults(
+        handler=_run_gui_package_automation_namespace
+    )
 
     gui_package_bridge_recovery_parser = subparsers.add_parser(
         "gui-package-bridge-recovery",
@@ -522,7 +548,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Optional localhost port for the deterministic WSL bridge during verification.",
     )
-    gui_package_bridge_recovery_parser.set_defaults(handler=_run_gui_package_bridge_recovery_namespace)
+    gui_package_bridge_recovery_parser.set_defaults(
+        handler=_run_gui_package_bridge_recovery_namespace
+    )
 
     gui_package_main_window_parser = subparsers.add_parser(
         "gui-package-main-window",
@@ -558,7 +586,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Optional localhost port for the deterministic WSL bridge during verification.",
     )
-    gui_package_main_window_parser.set_defaults(handler=_run_gui_package_main_window_namespace)
+    gui_package_main_window_parser.set_defaults(
+        handler=_run_gui_package_main_window_namespace
+    )
 
     gui_package_tray_parser = subparsers.add_parser(
         "gui-package-tray",
@@ -721,8 +751,14 @@ def _run_backend_namespace(namespace: argparse.Namespace) -> int:
     else:
         backend = get_backend()
 
-    if bool(getattr(namespace, "restart_bridge", False)) and action in {"set", "toggle"}:
-        _restart_local_bridge(str(getattr(namespace, "host", "127.0.0.1")), int(getattr(namespace, "port", 8765)))
+    if bool(getattr(namespace, "restart_bridge", False)) and action in {
+        "set",
+        "toggle",
+    }:
+        _restart_local_bridge(
+            str(getattr(namespace, "host", "127.0.0.1")),
+            int(getattr(namespace, "port", 8765)),
+        )
 
     payload = backend_payload(backend)
     if bool(getattr(namespace, "json_output", False)):

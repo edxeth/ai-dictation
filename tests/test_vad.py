@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import importlib
-from itertools import repeat
-from pathlib import Path
 import signal
 import sys
 import time
+from itertools import repeat
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -45,7 +44,12 @@ class _FakeStream:
         self.close_called = False
 
     def read(self, frame_samples: int, exception_on_overflow: bool = False) -> bytes:
-        assert frame_samples in {dictation_module.PCM_STREAM_CHUNK_SAMPLES, 1024, VAD_FRAME_SAMPLES}
+        assert exception_on_overflow is False
+        assert frame_samples in {
+            dictation_module.PCM_STREAM_CHUNK_SAMPLES,
+            1024,
+            VAD_FRAME_SAMPLES,
+        }
         if self._index >= len(self._frames):
             return self._frames[-1]
         frame = self._frames[self._index]
@@ -169,17 +173,21 @@ SILENCE_FRAME = b"\x00\x00" * (VAD_FRAME_BYTES // 2)
 
 
 def test_has_probable_speech_rejects_silence(monkeypatch):
-    monkeypatch.setattr("local_ai_dictation.audio.build_vad_backend", lambda mode: _FakeVadBackend({SPEECH_FRAME}))
+    monkeypatch.setattr(
+        "local_ai_dictation.audio.build_vad_backend",
+        lambda mode: _FakeVadBackend({SPEECH_FRAME}),
+    )
 
     assert has_probable_speech(b"".join([SILENCE_FRAME] * 4), 16000) is False
 
 
-
 def test_has_probable_speech_accepts_multiple_voiced_frames(monkeypatch):
-    monkeypatch.setattr("local_ai_dictation.audio.build_vad_backend", lambda mode: _FakeVadBackend({SPEECH_FRAME}))
+    monkeypatch.setattr(
+        "local_ai_dictation.audio.build_vad_backend",
+        lambda mode: _FakeVadBackend({SPEECH_FRAME}),
+    )
 
     assert has_probable_speech(b"".join([SPEECH_FRAME] * 3), 16000) is True
-
 
 
 def test_vad_auto_stop_only_after_min_speech_and_silence_window():
@@ -249,14 +257,19 @@ def test_dictation_recording_uses_vad_backend_when_enabled(monkeypatch):
     backend = object()
     calls: dict[str, object] = {}
 
-    monkeypatch.setattr("local_ai_dictation.dictation.build_vad_backend", lambda mode: backend)
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.build_vad_backend", lambda mode: backend
+    )
 
     def _fake_record_until_vad_stop(stream_arg, **kwargs):
         calls["stream"] = stream_arg
         calls.update(kwargs)
         return b"vad-audio"
 
-    monkeypatch.setattr("local_ai_dictation.dictation.record_until_vad_stop", _fake_record_until_vad_stop)
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.record_until_vad_stop",
+        _fake_record_until_vad_stop,
+    )
 
     audio_data = dictation_module.record_audio_interruptible(config, pyaudio_module)
 
@@ -272,8 +285,9 @@ def test_dictation_recording_uses_vad_backend_when_enabled(monkeypatch):
     assert pyaudio_module.terminated is True
 
 
-
-def test_dictation_recording_falls_back_to_explicit_pulse_device_when_default_device_is_broken(monkeypatch):
+def test_dictation_recording_falls_back_to_explicit_pulse_device_when_default_device_is_broken(
+    monkeypatch,
+):
     dictation_module._shutdown_event.clear()
     stream = _FakeStream([b"\x00\x00" * 1024])
     pyaudio_module = _FallbackPyAudioModule(stream)
@@ -297,7 +311,6 @@ def test_dictation_recording_falls_back_to_explicit_pulse_device_when_default_de
     assert pyaudio_module.terminated is True
 
 
-
 def test_dictation_recording_resolves_named_input_device():
     dictation_module._shutdown_event.clear()
     stream = _FakeStream([b"\x00\x00" * 1024])
@@ -317,8 +330,9 @@ def test_dictation_recording_resolves_named_input_device():
     assert pyaudio_module.open_calls[0]["input_device_index"] == 0
 
 
-
-def test_dictation_recording_prefers_pipewire_device_on_linux_when_input_device_is_unset(monkeypatch):
+def test_dictation_recording_prefers_pipewire_device_on_linux_when_input_device_is_unset(
+    monkeypatch,
+):
     dictation_module._shutdown_event.clear()
     stream = _FakeStream([b"\x00\x00" * 1024])
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
@@ -339,16 +353,16 @@ def test_dictation_recording_prefers_pipewire_device_on_linux_when_input_device_
     assert pyaudio_module.open_calls[0]["input_device_index"] == 6
 
 
-
 def test_resolve_input_sample_rate_prefers_pipewire_default_rate_on_linux(monkeypatch):
     stream = _FakeStream([b"\x00\x00" * 1024])
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
 
-    monkeypatch.setattr("local_ai_dictation.audio.pulse_default_source_spec", lambda: None)
+    monkeypatch.setattr(
+        "local_ai_dictation.audio.pulse_default_source_spec", lambda: None
+    )
     sample_rate = audio_module.resolve_input_sample_rate(None, pyaudio_module)
 
     assert sample_rate == 44100
-
 
 
 def test_parec_manual_stop_only_drains_one_capture_buffer(monkeypatch):
@@ -385,13 +399,26 @@ def test_parec_manual_stop_only_drains_one_capture_buffer(monkeypatch):
 
     process = _FakeParecProcess()
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec")
-    monkeypatch.setattr("local_ai_dictation.dictation.pulse_default_source_spec", lambda: (16000, 1))
-    monkeypatch.setattr("local_ai_dictation.dictation.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("local_ai_dictation.dictation.time.monotonic", lambda: clock["now"])
-    monkeypatch.setattr("local_ai_dictation.dictation.time.sleep", lambda seconds: clock.__setitem__("now", clock["now"] + seconds))
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec"
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.pulse_default_source_spec", lambda: (16000, 1)
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.subprocess.Popen", lambda *args, **kwargs: process
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.time.monotonic", lambda: clock["now"]
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
 
-    audio_data = dictation_module._record_audio_with_parec(16000, stop_requested=lambda: True)
+    audio_data = dictation_module._record_audio_with_parec(
+        16000, stop_requested=lambda: True
+    )
 
     assert audio_data == b"\x01\x00" * 16
     assert clock["now"] < 0.2
@@ -438,9 +465,15 @@ def test_parec_stops_immediately_when_streaming_sink_fails(monkeypatch):
         if callback_calls == 2:
             raise RuntimeError("Willow stream failed")
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec")
-    monkeypatch.setattr("local_ai_dictation.dictation.pulse_default_source_spec", lambda: (16000, 1))
-    monkeypatch.setattr("local_ai_dictation.dictation.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec"
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.pulse_default_source_spec", lambda: (16000, 1)
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.subprocess.Popen", lambda *args, **kwargs: process
+    )
 
     started = time.monotonic()
     with pytest.raises(RuntimeError, match="Willow stream failed"):
@@ -463,8 +496,12 @@ def test_parec_streaming_validates_channel_count_before_starting_process(monkeyp
         process_started = True
         raise AssertionError("parec must not start for an unsupported stream format")
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec")
-    monkeypatch.setattr("local_ai_dictation.dictation.pulse_default_source_spec", lambda: (48000, 6))
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec"
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.pulse_default_source_spec", lambda: (48000, 6)
+    )
     monkeypatch.setattr("local_ai_dictation.dictation.subprocess.Popen", popen)
 
     with pytest.raises(ValueError, match="Unsupported channel count"):
@@ -522,11 +559,20 @@ def test_parec_streaming_callback_converts_native_capture_incrementally(monkeypa
         command.extend(args)
         return process
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec")
-    monkeypatch.setattr("local_ai_dictation.dictation.pulse_default_source_spec", lambda: (48000, 2))
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec"
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.pulse_default_source_spec", lambda: (48000, 2)
+    )
     monkeypatch.setattr("local_ai_dictation.dictation.subprocess.Popen", popen)
-    monkeypatch.setattr("local_ai_dictation.dictation.time.monotonic", lambda: clock["now"])
-    monkeypatch.setattr("local_ai_dictation.dictation.time.sleep", lambda seconds: clock.__setitem__("now", clock["now"] + seconds))
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.time.monotonic", lambda: clock["now"]
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
 
     audio_data = dictation_module._record_audio_with_parec(
         16000,
@@ -540,18 +586,25 @@ def test_parec_streaming_callback_converts_native_capture_incrementally(monkeypa
     assert command[command.index("--channels") + 1] == "2"
 
 
-def test_streaming_recording_falls_back_to_pyaudio_before_parec_sends_audio(monkeypatch):
+def test_streaming_recording_falls_back_to_pyaudio_before_parec_sends_audio(
+    monkeypatch,
+):
     dictation_module._shutdown_event.clear()
     stream = _FakeStream([b"\x01\x00" * 512])
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
     config = DictationConfig(clipboard=False)
     streamed: list[bytes] = []
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec")
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec"
+    )
+
     def fail_before_audio(*args, **kwargs):
         raise RuntimeError("parec setup failed")
 
-    monkeypatch.setattr("local_ai_dictation.dictation._record_audio_with_parec", fail_before_audio)
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation._record_audio_with_parec", fail_before_audio
+    )
     monkeypatch.setattr("local_ai_dictation.dictation.STOP_CAPTURE_DRAIN_SECONDS", 0.0)
 
     audio_data = dictation_module.record_audio_interruptible(
@@ -573,8 +626,14 @@ def test_dictation_recording_prefers_parec_capture_when_available(monkeypatch):
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
     config = DictationConfig(clipboard=False)
 
-    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec" if name == "parec" else None)
-    monkeypatch.setattr("local_ai_dictation.dictation._record_audio_with_parec", lambda sample_rate, *, stop_requested, status_stream=None: b"parec-audio")
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.shutil.which",
+        lambda name: "/usr/bin/parec" if name == "parec" else None,
+    )
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation._record_audio_with_parec",
+        lambda sample_rate, *, stop_requested, status_stream=None: b"parec-audio",
+    )
 
     audio_data = dictation_module.record_audio_interruptible(
         config,
@@ -584,7 +643,6 @@ def test_dictation_recording_prefers_parec_capture_when_available(monkeypatch):
 
     assert audio_data == b"parec-audio"
     assert pyaudio_module.open_calls == []
-
 
 
 def test_streaming_pcm_converter_matches_whole_buffer_conversion():

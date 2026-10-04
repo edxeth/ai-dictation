@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import importlib
 import io
 import json
-from pathlib import Path
 import sys
-
+from dataclasses import replace
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -17,7 +16,9 @@ main = importlib.import_module("local_ai_dictation.cli").main
 dictation_module = importlib.import_module("local_ai_dictation.dictation")
 output_module = importlib.import_module("local_ai_dictation.output")
 DictationConfig = importlib.import_module("local_ai_dictation.types").DictationConfig
-TranscriptionResult = importlib.import_module("local_ai_dictation.types").TranscriptionResult
+TranscriptionResult = importlib.import_module(
+    "local_ai_dictation.types"
+).TranscriptionResult
 
 
 class _ClipboardFailure:
@@ -36,7 +37,9 @@ class _ClipboardSuccess:
 class _FakeTorchCuda:
     @staticmethod
     def is_available() -> bool:
-        raise AssertionError("torch CUDA must not be queried without a loaded NVIDIA driver")
+        raise AssertionError(
+            "torch CUDA must not be queried without a loaded NVIDIA driver"
+        )
 
 
 class _FakeTorch:
@@ -48,9 +51,8 @@ class _FakeModel:
 
 
 class _GuardModel:
-    def transcribe(self, audio, *, verbose=False):
+    def transcribe(self, audio):
         raise AssertionError("model.transcribe should not be called")
-
 
 
 def test_emit_transcription_result_writes_json_stdout_and_output_file(tmp_path):
@@ -58,7 +60,9 @@ def test_emit_transcription_result_writes_json_stdout_and_output_file(tmp_path):
     stdout = io.StringIO()
     status_stream = io.StringIO()
     clipboard = _ClipboardSuccess()
-    config = DictationConfig(format="json", output_file=str(output_path), clipboard=True)
+    config = DictationConfig(
+        format="json", output_file=str(output_path), clipboard=True
+    )
 
     warning = output_module.emit_transcription_result(
         TranscriptionResult(text="hello world", device="cpu"),
@@ -82,11 +86,15 @@ def test_emit_transcription_result_writes_json_stdout_and_output_file(tmp_path):
     assert status_stream.getvalue() == ""
 
 
-def test_emit_transcription_result_keeps_clipboard_failure_non_fatal_and_debug_only(tmp_path):
+def test_emit_transcription_result_keeps_clipboard_failure_non_fatal_and_debug_only(
+    tmp_path,
+):
     output_path = tmp_path / "transcript.txt"
     stdout = io.StringIO()
     status_stream = io.StringIO()
-    config = DictationConfig(format="text", output_file=str(output_path), clipboard=True)
+    config = DictationConfig(
+        format="text", output_file=str(output_path), clipboard=True
+    )
 
     warning = output_module.emit_transcription_result(
         TranscriptionResult(text="hello world"),
@@ -118,7 +126,10 @@ def test_emit_transcription_result_keeps_clipboard_failure_non_fatal_and_debug_o
 
 
 def test_transcribe_once_skips_model_inference_for_silence(monkeypatch):
-    monkeypatch.setattr("local_ai_dictation.dictation.has_probable_speech", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        "local_ai_dictation.dictation.has_probable_speech",
+        lambda *args, **kwargs: False,
+    )
 
     transcription, temp_path, start, end = dictation_module._transcribe_once(
         DictationConfig(clipboard=False),
@@ -133,7 +144,6 @@ def test_transcribe_once_skips_model_inference_for_silence(monkeypatch):
     assert end >= start
 
 
-
 def test_dictation_json_mode_keeps_status_off_stdout(monkeypatch, capsys):
     waits = iter([True, False])
     dictation_module._shutdown_event.clear()
@@ -141,11 +151,11 @@ def test_dictation_json_mode_keeps_status_off_stdout(monkeypatch, capsys):
 
     monkeypatch.setattr(
         "local_ai_dictation.dictation._load_runtime_dependencies",
-        lambda debug: (object(), object(), _ClipboardSuccess(), _FakeTorch()),
+        lambda backend, debug: (object(), object(), _ClipboardSuccess(), _FakeTorch()),
     )
     monkeypatch.setattr(
         "local_ai_dictation.dictation._load_model",
-        lambda config, nemo_asr, torch_module: (_FakeModel(), False, 0.0, 0.0),
+        lambda config, _runtime_module, torch_module: (_FakeModel(), False, 0.0, 0.0),
     )
     monkeypatch.setattr(
         "local_ai_dictation.dictation.wait_for_enter_interruptible",

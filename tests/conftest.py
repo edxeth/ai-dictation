@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -17,7 +16,6 @@ pytest = importlib.import_module("pytest")
 def force_offline_test_environment(monkeypatch) -> None:
     """Keep the automated test suite deterministic and offline-safe."""
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
     monkeypatch.delenv("PULSE_SERVER", raising=False)
 
 

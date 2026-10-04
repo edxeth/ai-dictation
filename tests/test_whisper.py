@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -40,7 +39,6 @@ class _FakeModel:
     def transcribe(self, audio_path: str, **kwargs):
         self.calls.append({"audio_path": audio_path, **kwargs})
         return [_FakeSegment(" hello")], object()
-
 
 
 class _StreamingFakeModel:
@@ -107,7 +105,9 @@ def test_whisper_streaming_short_audio_preserves_batch_transcription():
 
 def test_whisper_streaming_commits_timed_windows_without_duplicate_words():
     model = _StreamingFakeModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
 
@@ -141,7 +141,9 @@ def test_whisper_streaming_keeps_new_word_just_after_window_boundary():
             return [_FakeSegment("".join(word.word for word in words), words)], object()
 
     model = BoundaryModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
 
@@ -170,7 +172,9 @@ def test_whisper_streaming_falls_back_when_overlap_revises_a_word():
             return [_FakeSegment("".join(word.word for word in words), words)], object()
 
     model = RevisionModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
 
@@ -204,7 +208,9 @@ def test_whisper_streaming_falls_back_when_overlap_inserts_a_word():
             return [_FakeSegment("".join(word.word for word in words), words)], object()
 
     model = InsertionModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
 
@@ -247,7 +253,9 @@ def test_whisper_cancel_waits_until_model_inference_releases_ownership():
             return super().transcribe(audio, **kwargs)
 
     model = BlockingModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
     session.send_audio(b"\x01\x00" * (4 * 16000))
@@ -282,7 +290,9 @@ def test_whisper_streaming_falls_back_to_full_transcription_when_rolling_fails()
             return super().transcribe(audio, **kwargs)
 
     model = FailingRollingModel()
-    engine = WhisperEngine(model, device="cuda", compute_type="float16", model_id="fake")
+    engine = WhisperEngine(
+        model, device="cuda", compute_type="float16", model_id="fake"
+    )
     session = engine.start_streaming()
     session.wait_ready()
 

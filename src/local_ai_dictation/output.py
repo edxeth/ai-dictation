@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any, TextIO
 
-from local_ai_dictation.errors import AppError, CLIPBOARD_UNAVAILABLE
+from local_ai_dictation.errors import CLIPBOARD_UNAVAILABLE, AppError
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
-
 
 _DICTATION_JSON_SCHEMA_VERSION = 1
 
@@ -64,8 +63,13 @@ def emit_transcription_result(
 
     clipboard_warning: AppError | None = None
     if config.clipboard and pyperclip_module is not None:
-        clipboard_warning = copy_transcript_to_clipboard(transcription, pyperclip_module)
+        clipboard_warning = copy_transcript_to_clipboard(
+            transcription, pyperclip_module
+        )
         if clipboard_warning is not None and config.debug:
-            print(f"Clipboard warning: {clipboard_warning}", file=status_stream or sys.stderr)
+            print(
+                f"Clipboard warning: {clipboard_warning}",
+                file=status_stream or sys.stderr,
+            )
 
     return clipboard_warning

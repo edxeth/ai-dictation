@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import importlib
 import os
-from pathlib import Path
 import platform
 import shutil
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from local_ai_dictation.audio import list_input_devices, probe_audio_backend
@@ -87,7 +87,11 @@ def _collect_clipboard_status() -> dict[str, Any]:
     if backend_name == "copy_no":
         return {"status": "missing", "backend": None}
     if backend_name == "copy_wsl" and shutil.which("clip.exe") is None:
-        return {"status": "unavailable", "backend": "pyperclip-wsl", "detail": "clip.exe is not available"}
+        return {
+            "status": "unavailable",
+            "backend": "pyperclip-wsl",
+            "detail": "clip.exe is not available",
+        }
 
     backend = backend_name.removeprefix("copy_") or "pyperclip"
     return {"status": "ok", "backend": backend}
@@ -140,9 +144,12 @@ def _collect_cuda_status() -> dict[str, Any]:
     }
 
 
-def _collect_model_status(check_model_cache_enabled: bool, backend: str) -> dict[str, Any]:
+def _collect_model_status(
+    check_model_cache_enabled: bool, backend: str
+) -> dict[str, Any]:
     if backend == "whisper":
-        from local_ai_dictation.whisper import WHISPER_MODEL_ID, check_model_cache as selected_check
+        from local_ai_dictation.whisper import WHISPER_MODEL_ID
+        from local_ai_dictation.whisper import check_model_cache as selected_check
 
         model_id = WHISPER_MODEL_ID
     elif backend == "willow":
@@ -186,8 +193,14 @@ def _build_issues(
             )
         )
 
-    if (pulse.get("status") == "unreachable" and not audio_devices) or device_error is not None:
-        detail = pulse.get("detail") or (str(device_error) if device_error is not None else "Audio backend probe failed")
+    if (
+        pulse.get("status") == "unreachable" and not audio_devices
+    ) or device_error is not None:
+        detail = pulse.get("detail") or (
+            str(device_error)
+            if device_error is not None
+            else "Audio backend probe failed"
+        )
         issues.append(
             DoctorIssue(
                 code=AUDIO_BACKEND_UNREACHABLE,
@@ -218,7 +231,9 @@ def _build_issues(
         )
 
     if model.get("checked") and not bool(model.get("import_ready", True)):
-        detail = model.get("import_error") or model.get("detail") or "Model imports failed"
+        detail = (
+            model.get("import_error") or model.get("detail") or "Model imports failed"
+        )
         issues.append(
             DoctorIssue(
                 code=MODEL_IMPORT_FAILED,
@@ -233,7 +248,9 @@ def _build_issues(
         )
 
     if model.get("checked") and model.get("cache_present") is False:
-        detail = model.get("cache_path") or model.get("detail") or "Model cache is missing"
+        detail = (
+            model.get("cache_path") or model.get("detail") or "Model cache is missing"
+        )
         issues.append(
             DoctorIssue(
                 code=MODEL_CACHE_MISSING,
@@ -264,7 +281,9 @@ def _status_from_issues(issues: Sequence[DoctorIssue]) -> dict[str, Any]:
     }
 
 
-def collect_doctor_report(check_model_cache: bool = False, *, backend: str | None = None) -> DoctorReport:
+def collect_doctor_report(
+    check_model_cache: bool = False, *, backend: str | None = None
+) -> DoctorReport:
     env = _collect_env()
     wsl = _detect_wsl()
     pulse = probe_audio_backend()
@@ -317,7 +336,7 @@ def render_doctor_text(report: DoctorReport) -> str:
         f"cuda: {'available' if report.cuda.get('available') else 'unavailable'}",
         (
             f"model: {'checked' if report.model.get('checked') else 'skipped'}"
-            if not report.model.get('checked')
+            if not report.model.get("checked")
             else f"model: checked cache_present={report.model.get('cache_present')} import_ready={report.model.get('import_ready')}"
         ),
     ]

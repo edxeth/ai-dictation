@@ -20,12 +20,12 @@ import time
 import warnings
 import wave
 from contextlib import nullcontext
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from local_ai_dictation.audio import (
-    Pcm16StreamConverter,
     VAD_FRAME_SAMPLES,
     VAD_SAMPLE_RATE,
+    Pcm16StreamConverter,
     build_vad_backend,
     downmix_pcm16_to_mono,
     fallback_input_device_id,
@@ -48,8 +48,11 @@ from local_ai_dictation.errors import (
 )
 from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.output import emit_transcription_result
-from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
-
+from local_ai_dictation.types import (
+    DictationConfig,
+    TranscriptionEngine,
+    TranscriptionResult,
+)
 
 _shutdown_event = threading.Event()
 _bridge_stop_event = threading.Event()
@@ -87,7 +90,7 @@ def _no_kbi_traceback(exc_type, exc, tb) -> None:
 sys.excepthook = _no_kbi_traceback
 
 
-HELP_DESC = "AI Dictation with selectable Whisper, Parakeet, or Willow backends."
+HELP_DESC = "AI Dictation with selectable Whisper, Parakeet Ultra, or Willow backends."
 HELP_EPILOG = """Examples:
   local-ai-dictation dictation
   local-ai-dictation dictation --backend whisper
@@ -112,7 +115,9 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParse
         default=None,
         help="Verbose diagnostics: device, timings, GPU memory (logs to file unless --log-file=-)",
     )
-    parser.add_argument("--cpu", action="store_true", default=None, help="Force CPU inference")
+    parser.add_argument(
+        "--cpu", action="store_true", default=None, help="Force CPU inference"
+    )
     parser.add_argument(
         "--vad",
         action="store_true",
@@ -212,13 +217,8 @@ def configure_logging(config: DictationConfig, *, status_stream=None) -> None:
 def redirect_library_loggers_to_root_file() -> None:
     names = [
         "",
-        "nemo_logger",
         "urllib3",
-        "datasets",
-        "matplotlib",
-        "graphviz",
         "huggingface_hub",
-        "transformers",
     ]
     for name in names:
         logger = logging.getLogger(name)
@@ -324,12 +324,10 @@ def save_audio(audio_data: bytes, filename: str, sample_rate: int = 16000) -> No
 
 def _load_runtime_dependencies(backend: str, debug: bool):
     if not debug:
-        if backend == "parakeet":
-            os.environ.setdefault("NEMO_LOG_LEVEL", "ERROR")
         _silence_start()
     try:
         if backend == "parakeet":
-            runtime_module = importlib.import_module("nemo.collections.asr")
+            runtime_module = importlib.import_module("local_ai_dictation.model")
         elif backend == "whisper":
             runtime_module = importlib.import_module("faster_whisper")
         elif backend == "willow":
@@ -478,7 +476,6 @@ def _record_audio_with_parec(
     return audio_data or None
 
 
-
 def record_audio_interruptible(
     config: DictationConfig,
     pyaudio_module: Any,
@@ -494,7 +491,12 @@ def record_audio_interruptible(
         if config.vad
         else (PCM_STREAM_CHUNK_SAMPLES if on_audio_chunk is not None else 1024)
     )
-    if os.name == "posix" and not config.vad and config.input_device is None and shutil.which("parec") is not None:
+    if (
+        os.name == "posix"
+        and not config.vad
+        and config.input_device is None
+        and shutil.which("parec") is not None
+    ):
         parec_stream_started = False
 
         def _forward_parec_audio(data: bytes) -> None:
@@ -519,7 +521,9 @@ def record_audio_interruptible(
                 print(f"parec capture fallback: {exc}", file=status_stream)
 
     try:
-        requested_input_device_id = resolve_input_device_id(config.input_device, pyaudio_module)
+        requested_input_device_id = resolve_input_device_id(
+            config.input_device, pyaudio_module
+        )
     except ValueError as exc:
         error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
         print(f"❌ Audio error: {error}", file=status_stream)
@@ -538,7 +542,10 @@ def record_audio_interruptible(
                 frames_per_buffer=frames_per_buffer,
             )
         except Exception as exc:
-            if requested_input_device_id is None and _looks_like_missing_default_output_device(exc):
+            if (
+                requested_input_device_id is None
+                and _looks_like_missing_default_output_device(exc)
+            ):
                 try:
                     fallback_devices = list_input_devices(pyaudio_module)
                     fallback_device_id = fallback_input_device_id(fallback_devices)
@@ -574,7 +581,9 @@ def record_audio_interruptible(
     print("🎤 Recording...", file=status_stream, flush=True)
 
     if stop_requested is None:
-        stop_requested = lambda: _shutdown_event.is_set() or _manual_stop_requested()
+
+        def stop_requested() -> bool:
+            return _shutdown_event.is_set() or _manual_stop_requested()
 
     ctx = SilentSTDERR() if not config.debug else nullcontext()
     with ctx:
@@ -583,7 +592,9 @@ def record_audio_interruptible(
                 try:
                     vad_backend = build_vad_backend(config.vad_mode)
                 except Exception as exc:
-                    error = AudioError(AUDIO_BACKEND_UNREACHABLE, f"WebRTC VAD unavailable: {exc}")
+                    error = AudioError(
+                        AUDIO_BACKEND_UNREACHABLE, f"WebRTC VAD unavailable: {exc}"
+                    )
                     print(f"❌ Audio error: {error}", file=status_stream)
                     return None
 
@@ -603,11 +614,15 @@ def record_audio_interruptible(
                 while not _shutdown_event.is_set():
                     if stop_requested():
                         if stop_deadline is None:
-                            stop_deadline = time.monotonic() + STOP_CAPTURE_DRAIN_SECONDS
+                            stop_deadline = (
+                                time.monotonic() + STOP_CAPTURE_DRAIN_SECONDS
+                            )
                         elif time.monotonic() >= stop_deadline:
                             break
                     try:
-                        data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                        data = stream.read(
+                            frames_per_buffer, exception_on_overflow=False
+                        )
                     except Exception:
                         continue
                     frames.append(data)
@@ -645,21 +660,24 @@ def _load_model(
             if config.backend == "whisper":
                 from local_ai_dictation.whisper import WHISPER_MODEL_ID, WhisperEngine
 
-                use_cuda = nvidia_driver_loaded() and torch_module.cuda.is_available() and not config.cpu
+                use_cuda = (
+                    nvidia_driver_loaded()
+                    and torch_module.cuda.is_available()
+                    and not config.cpu
+                )
                 device = "cuda" if use_cuda else "cpu"
                 compute_type = "float16" if use_cuda else "int8"
                 model = WhisperEngine(
-                    runtime_module.WhisperModel(WHISPER_MODEL_ID, device=device, compute_type=compute_type),
+                    runtime_module.WhisperModel(
+                        WHISPER_MODEL_ID, device=device, compute_type=compute_type
+                    ),
                     device=device,
                     compute_type=compute_type,
                     model_id=WHISPER_MODEL_ID,
                 )
             elif config.backend == "parakeet":
-                model = runtime_module.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
-                use_cuda = nvidia_driver_loaded() and torch_module.cuda.is_available() and not config.cpu
-                device = "cuda" if use_cuda else "cpu"
-                model.to(device)
-                model.eval()
+                model = runtime_module.load_engine(config)
+                use_cuda = model._device == "cuda"
             elif config.backend == "willow":
                 model = runtime_module.WillowEngine.from_config(config)
                 use_cuda = False
@@ -686,7 +704,9 @@ def _transcribe_once(
     start = time.perf_counter()
     if not has_probable_speech(audio_data, sample_rate, vad_mode=config.vad_mode):
         return (
-            TranscriptionResult(text="", metadata={"backend": config.backend, "silence_filtered": True}),
+            TranscriptionResult(
+                text="", metadata={"backend": config.backend, "silence_filtered": True}
+            ),
             "",
             start,
             time.perf_counter(),
@@ -708,13 +728,17 @@ def _transcribe_once(
     infer_ctx = nullcontext() if config.debug else _silence_context()
     try:
         with infer_ctx:
-            result = model.transcribe([temp_path], verbose=False)
+            result = model.transcribe([temp_path])
         if isinstance(result, list) and result:
             first = result[0]
-            transcript_text = getattr(first, "text", first if isinstance(first, str) else str(first))
+            transcript_text = getattr(
+                first, "text", first if isinstance(first, str) else str(first)
+            )
         else:
             transcript_text = str(result)
-        transcription = TranscriptionResult(text=transcript_text, metadata={"backend": config.backend})
+        transcription = TranscriptionResult(
+            text=transcript_text, metadata={"backend": config.backend}
+        )
         return transcription, temp_path, start, time.perf_counter()
     except Exception as exc:
         raise ModelError(MODEL_TRANSCRIBE_FAILED, str(exc)) from exc
@@ -735,7 +759,9 @@ def _run_bridge_controlled_dictation(
     _bridge_stop_event.clear()
 
     try:
-        model, _use_cuda, _load_start, _load_end = _load_model(config, runtime_module, torch_module)
+        model, _use_cuda, _load_start, _load_end = _load_model(
+            config, runtime_module, torch_module
+        )
     except ModelError as exc:
         print(f"❌ Error: {exc}", file=status_stream)
         return int(ExitCode.ERROR)
@@ -743,7 +769,11 @@ def _run_bridge_controlled_dictation(
     if _shutdown_event.is_set():
         return int(ExitCode.OK)
 
-    capture_sample_rate = VAD_SAMPLE_RATE if config.vad else resolve_input_sample_rate(config.input_device, pyaudio_module)
+    capture_sample_rate = (
+        VAD_SAMPLE_RATE
+        if config.vad
+        else resolve_input_sample_rate(config.input_device, pyaudio_module)
+    )
     audio_data = record_audio_interruptible(
         config,
         pyaudio_module,
@@ -765,7 +795,9 @@ def _run_bridge_controlled_dictation(
 
     try:
         infer_sample_rate = VAD_SAMPLE_RATE
-        prepared_audio_data = resample_pcm16_mono(audio_data, capture_sample_rate, infer_sample_rate)
+        prepared_audio_data = resample_pcm16_mono(
+            audio_data, capture_sample_rate, infer_sample_rate
+        )
         transcription, temp_path, _infer_start, _infer_end = _transcribe_once(
             config, model, prepared_audio_data, infer_sample_rate
         )
@@ -794,13 +826,12 @@ def run_dictation(args: argparse.Namespace) -> int:
     configure_logging(config, status_stream=status_stream)
     print("Starting...", file=status_stream, flush=True)
 
-    try:
-        runtime_module, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(
+    runtime_module, pyaudio_module, pyperclip_module, torch_module = (
+        _load_runtime_dependencies(
             config.backend,
             config.debug,
         )
-    except TypeError:
-        runtime_module, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(config.debug)
+    )
 
     if config.list_devices:
         return list_devices(pyaudio_module)
@@ -818,7 +849,9 @@ def run_dictation(args: argparse.Namespace) -> int:
         )
 
     try:
-        model, use_cuda, load_start, load_end = _load_model(config, runtime_module, torch_module)
+        model, use_cuda, load_start, load_end = _load_model(
+            config, runtime_module, torch_module
+        )
     except ModelError as exc:
         print(f"❌ Error: {exc}", file=status_stream)
         return int(ExitCode.ERROR)
@@ -829,9 +862,12 @@ def run_dictation(args: argparse.Namespace) -> int:
     if config.backend == "whisper":
         print("🚀 LOCAL AI DICTATION · WHISPER DISTIL LARGE V3.5", file=status_stream)
     elif config.backend == "parakeet":
-        print("🚀 LOCAL AI DICTATION · PARAKEET TDT 0.6B V3", file=status_stream)
+        print("🚀 LOCAL AI DICTATION · PARAKEET ULTRA", file=status_stream)
     else:
-        print("☁️ LOCAL AI DICTATION · WILLOW VOICE FRONTIER (SERVER-SELECTED)", file=status_stream)
+        print(
+            "☁️ LOCAL AI DICTATION · WILLOW VOICE FRONTIER (SERVER-SELECTED)",
+            file=status_stream,
+        )
     if nvidia_driver_loaded() and torch_module.cuda.is_available():
         print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}", file=status_stream)
     print("=" * 60, file=status_stream)
@@ -844,16 +880,20 @@ def run_dictation(args: argparse.Namespace) -> int:
         if config.backend == "willow":
             print("Model device: Willow Voice cloud", file=status_stream)
         else:
-            model_parameters = cast(Any, model).parameters()
-            print(f"Model device: {next(model_parameters).device}", file=status_stream)
-        if config.backend == "whisper":
             print(
-                f"Compute type: {getattr(model, '_parakeet_compute_type', 'unknown')}",
+                f"Model device: {getattr(model, '_device', 'unknown')}",
                 file=status_stream,
             )
-        elif use_cuda:
+        if config.backend == "whisper":
+            print(
+                f"Compute type: {getattr(model, '_compute_type', 'unknown')}",
+                file=status_stream,
+            )
+        elif use_cuda and nvidia_driver_loaded():
             capability = torch_module.cuda.get_device_capability()
-            print(f"CUDA capability: {capability[0]}.{capability[1]}", file=status_stream)
+            print(
+                f"CUDA capability: {capability[0]}.{capability[1]}", file=status_stream
+            )
             print(
                 f"GPU alloc (MiB) after load: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
                 file=status_stream,
@@ -870,9 +910,15 @@ def run_dictation(args: argparse.Namespace) -> int:
             ):
                 break
 
-            capture_sample_rate = VAD_SAMPLE_RATE if config.vad else resolve_input_sample_rate(config.input_device, pyaudio_module)
+            capture_sample_rate = (
+                VAD_SAMPLE_RATE
+                if config.vad
+                else resolve_input_sample_rate(config.input_device, pyaudio_module)
+            )
             record_start = time.perf_counter()
-            audio_data = record_audio_interruptible(config, pyaudio_module, sample_rate=capture_sample_rate)
+            audio_data = record_audio_interruptible(
+                config, pyaudio_module, sample_rate=capture_sample_rate
+            )
             record_end = time.perf_counter()
 
             if not audio_data or _shutdown_event.is_set():
@@ -880,7 +926,9 @@ def run_dictation(args: argparse.Namespace) -> int:
 
             try:
                 infer_sample_rate = VAD_SAMPLE_RATE
-                prepared_audio_data = resample_pcm16_mono(audio_data, capture_sample_rate, infer_sample_rate)
+                prepared_audio_data = resample_pcm16_mono(
+                    audio_data, capture_sample_rate, infer_sample_rate
+                )
                 transcription, temp_path, infer_start, infer_end = _transcribe_once(
                     config, model, prepared_audio_data, infer_sample_rate
                 )
@@ -909,7 +957,7 @@ def run_dictation(args: argparse.Namespace) -> int:
                     f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s",
                     file=status_stream,
                 )
-                if use_cuda and config.backend == "parakeet":
+                if use_cuda and config.backend == "parakeet" and nvidia_driver_loaded():
                     print(
                         f"GPU alloc (MiB) after infer: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
                         file=status_stream,

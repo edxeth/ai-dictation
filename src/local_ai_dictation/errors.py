@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Literal
-
+from typing import Literal
 
 IssueCode = Literal[
     "AUDIO_BACKEND_UNREACHABLE",
     "AUDIO_NO_INPUT_DEVICE",
-    "AUDIO_DEVICE_NOT_FOUND",
-    "AUDIO_DEVICE_AMBIGUOUS",
-    "AUDIO_SAMPLE_RATE_UNSUPPORTED",
     "CLIPBOARD_UNAVAILABLE",
     "CUDA_UNAVAILABLE",
     "MODEL_CACHE_MISSING",
@@ -23,9 +19,6 @@ IssueCode = Literal[
 
 AUDIO_BACKEND_UNREACHABLE: IssueCode = "AUDIO_BACKEND_UNREACHABLE"
 AUDIO_NO_INPUT_DEVICE: IssueCode = "AUDIO_NO_INPUT_DEVICE"
-AUDIO_DEVICE_NOT_FOUND: IssueCode = "AUDIO_DEVICE_NOT_FOUND"
-AUDIO_DEVICE_AMBIGUOUS: IssueCode = "AUDIO_DEVICE_AMBIGUOUS"
-AUDIO_SAMPLE_RATE_UNSUPPORTED: IssueCode = "AUDIO_SAMPLE_RATE_UNSUPPORTED"
 CLIPBOARD_UNAVAILABLE: IssueCode = "CLIPBOARD_UNAVAILABLE"
 CUDA_UNAVAILABLE: IssueCode = "CUDA_UNAVAILABLE"
 MODEL_CACHE_MISSING: IssueCode = "MODEL_CACHE_MISSING"
@@ -45,7 +38,6 @@ class ExitCode(IntEnum):
 class AppError(Exception):
     code: IssueCode
     message: str
-    details: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         Exception.__init__(self, self.message)

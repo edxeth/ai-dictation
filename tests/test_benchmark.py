@@ -4,14 +4,15 @@ import json
 import math
 import wave
 
+import pytest
+
 from local_ai_dictation.benchmark import benchmark_fixture
 from local_ai_dictation.cli import main
 from local_ai_dictation.types import TranscriptionResult
 
 
 class _FakeEngine:
-    _parakeet_device = "cpu"
-
+    _device = "cpu"
 
 
 def _write_wav(path, *, sample_rate: int = 16000, frames: int = 160):
@@ -20,7 +21,6 @@ def _write_wav(path, *, sample_rate: int = 16000, frames: int = 160):
         wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(b"\x00\x00" * frames)
-
 
 
 def test_benchmark_fixture_reports_expected_match_and_consistent_arithmetic(tmp_path):
@@ -38,7 +38,9 @@ def test_benchmark_fixture_reports_expected_match_and_consistent_arithmetic(tmp_
         check_expected=True,
         perf_counter=lambda: next(perf_values),
         load_engine_fn=lambda config: _FakeEngine(),
-        transcribe_wav_fn=lambda engine, path: TranscriptionResult(text="hello world", device="cpu"),
+        transcribe_wav_fn=lambda engine, path: TranscriptionResult(
+            text="hello world", device="cpu"
+        ),
     )
 
     assert report.schema_version == 1
@@ -57,7 +59,6 @@ def test_benchmark_fixture_reports_expected_match_and_consistent_arithmetic(tmp_
     assert report.normalized_transcript == "hello world"
     assert report.expected_text == "Hello, WORLD!!\n"
     assert report.normalized_match is True
-
 
 
 def test_benchmark_command_emits_json_schema(monkeypatch, tmp_path, capsys):
@@ -95,13 +96,19 @@ def test_benchmark_command_emits_json_schema(monkeypatch, tmp_path, capsys):
     assert payload["runs"] == 2
     assert payload["device"] == "cpu"
     assert len(payload["run_ms"]) == 2
-    assert math.isclose(payload["total_ms"], payload["load_ms"] + sum(payload["run_ms"]), rel_tol=0, abs_tol=1e-6)
+    assert math.isclose(
+        payload["total_ms"],
+        payload["load_ms"] + sum(payload["run_ms"]),
+        rel_tol=0,
+        abs_tol=1e-6,
+    )
     assert payload["expected_text"] == ""
     assert payload["normalized_match"] is True
 
 
-
-def test_benchmark_command_redirects_noisy_runtime_stdout_away_from_json(monkeypatch, tmp_path, capsys):
+def test_benchmark_command_redirects_noisy_runtime_stdout_away_from_json(
+    monkeypatch, tmp_path, capsys
+):
     fixture = tmp_path / "short_16k.wav"
     expected = tmp_path / "short_16k.expected.txt"
     _write_wav(fixture)
@@ -138,8 +145,9 @@ def test_benchmark_command_redirects_noisy_runtime_stdout_away_from_json(monkeyp
     assert "runtime-info-log" in captured.err
 
 
-
-def test_benchmark_command_requires_sidecar_when_check_expected_is_enabled(tmp_path, capsys):
+def test_benchmark_command_requires_sidecar_when_check_expected_is_enabled(
+    tmp_path, capsys
+):
     fixture = tmp_path / "short_16k.wav"
     _write_wav(fixture)
 
@@ -158,3 +166,29 @@ def test_benchmark_command_requires_sidecar_when_check_expected_is_enabled(tmp_p
 
     assert exit_code == 1
     assert "Expected transcript sidecar not found" in captured.err
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_benchmark_closes_the_direct_runtime_after_success_or_failure(tmp_path, fails):
+    fixture = tmp_path / "speech.wav"
+    _write_wav(fixture)
+    closed = []
+
+    class Engine(_FakeEngine):
+        def close(self):
+            closed.append(True)
+
+    def transcribe(engine, path):
+        if fails:
+            raise RuntimeError("inference failed")
+        return TranscriptionResult(text="hello", device="cpu")
+
+    kwargs = dict(
+        runs=1, load_engine_fn=lambda config: Engine(), transcribe_wav_fn=transcribe
+    )
+    if fails:
+        with pytest.raises(RuntimeError, match="inference failed"):
+            benchmark_fixture(fixture, **kwargs)
+    else:
+        assert benchmark_fixture(fixture, **kwargs).transcript == "hello"
+    assert closed == [True]

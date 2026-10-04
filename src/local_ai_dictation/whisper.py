@@ -3,29 +3,27 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.errors import (
+    MODEL_IMPORT_FAILED,
+    MODEL_TRANSCRIBE_FAILED,
+    ModelError,
+)
 from local_ai_dictation.gpu import nvidia_driver_loaded
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
-
 
 WHISPER_MODEL_ID = "deepdml/faster-distil-whisper-large-v3.5"
 WHISPER_SAMPLE_RATE = 16000
 WHISPER_STREAM_WINDOW_SECONDS = 4
 WHISPER_STREAM_STRIDE_SECONDS = 2
 WHISPER_STREAM_RECONCILE_TOLERANCE_SECONDS = 0.65
-
-
-class _DummyParameter:
-    def __init__(self, device: str) -> None:
-        self.device = device
 
 
 class _TranscriptItem:
@@ -60,7 +58,7 @@ class WhisperStreamingSession:
         self._pending_words: list[tuple[float, float, str]] = []
         self._pending_window_end = 0.0
         self._previous_window_words: list[tuple[float, float, str]] = []
-        self._rolling_disabled = engine._parakeet_device != "cuda"
+        self._rolling_disabled = engine._device != "cuda"
         self._next_window_end = WHISPER_STREAM_WINDOW_SECONDS * WHISPER_SAMPLE_RATE
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -85,7 +83,9 @@ class WhisperStreamingSession:
         self._raise_if_failed()
         with self._condition:
             if self._cancelled:
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Whisper streaming session was cancelled")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED, "Whisper streaming session was cancelled"
+                )
         return self._transcript or ""
 
     def cancel(self) -> None:
@@ -106,11 +106,13 @@ class WhisperStreamingSession:
             while True:
                 with self._condition:
                     self._condition.wait_for(
-                        lambda: self._cancelled
-                        or self._finish_requested
-                        or (
-                            not self._rolling_disabled
-                            and len(self._audio) // 2 >= self._next_window_end
+                        lambda: (
+                            self._cancelled
+                            or self._finish_requested
+                            or (
+                                not self._rolling_disabled
+                                and len(self._audio) // 2 >= self._next_window_end
+                            )
                         )
                     )
                     if self._cancelled:
@@ -191,15 +193,21 @@ class WhisperStreamingSession:
         current_window_start: float,
     ) -> tuple[set[int], bool]:
         expected_overlap = [
-            word for word in self._previous_window_words if word[1] >= current_window_start
+            word
+            for word in self._previous_window_words
+            if word[1] >= current_window_start
         ]
-        crossing_words = [word for word in expected_overlap if word[0] < current_window_start]
+        crossing_words = [
+            word for word in expected_overlap if word[0] < current_window_start
+        ]
         stable_words = expected_overlap[len(crossing_words) :]
         agreements: list[
             tuple[list[tuple[float, float, str]], list[tuple[float, float, str]]]
         ] = []
         for crossing_count in range(len(crossing_words) + 1):
-            expected = crossing_words[len(crossing_words) - crossing_count :] + stable_words
+            expected = (
+                crossing_words[len(crossing_words) - crossing_count :] + stable_words
+            )
             current = current_words[: len(expected)]
             if len(current) != len(expected):
                 continue
@@ -231,7 +239,10 @@ class WhisperStreamingSession:
                     continue
                 if _word_key(current[2]) != _word_key(pending[2]):
                     continue
-                if abs(current[1] - pending[1]) > WHISPER_STREAM_RECONCILE_TOLERANCE_SECONDS:
+                if (
+                    abs(current[1] - pending[1])
+                    > WHISPER_STREAM_RECONCILE_TOLERANCE_SECONDS
+                ):
                     continue
                 reconciled[pending_index] = current
                 used_current.add(current_index)
@@ -252,11 +263,15 @@ class WhisperStreamingSession:
         self._previous_window_words.clear()
 
     def _finish_transcription(self, pcm: bytes) -> str:
-        if self._rolling_disabled or (not self._committed_words and not self._pending_words):
+        if self._rolling_disabled or (
+            not self._committed_words and not self._pending_words
+        ):
             return self._engine._transcribe_pcm_text(pcm)
 
         overlap_seconds = WHISPER_STREAM_WINDOW_SECONDS - WHISPER_STREAM_STRIDE_SECONDS
-        pending_boundary = self._pending_window_end if self._pending_words else self._committed_until
+        pending_boundary = (
+            self._pending_window_end if self._pending_words else self._committed_until
+        )
         final_start_seconds = max(0.0, pending_boundary - overlap_seconds)
         final_start_sample = int(final_start_seconds * WHISPER_SAMPLE_RATE)
         if final_start_sample * 2 >= len(pcm):
@@ -291,24 +306,16 @@ class WhisperStreamingSession:
 
 
 class WhisperEngine:
-    def __init__(self, model: Any, *, device: str, compute_type: str, model_id: str) -> None:
+    def __init__(
+        self, model: Any, *, device: str, compute_type: str, model_id: str
+    ) -> None:
         self._model = model
-        self._parakeet_device = device
-        self._parakeet_compute_type = compute_type
-        self._parakeet_model_id = model_id
+        self._device = device
+        self._compute_type = compute_type
+        self._model_id = model_id
         self._inference_lock = threading.Lock()
 
-    def to(self, device: str) -> Any:
-        self._parakeet_device = device
-        return self
-
-    def eval(self) -> Any:
-        return self
-
-    def parameters(self):
-        yield _DummyParameter(self._parakeet_device)
-
-    def transcribe(self, audio: Sequence[str], *, verbose: bool = False) -> list[Any]:
+    def transcribe(self, audio: Sequence[str]) -> list[Any]:
         if not audio:
             return [_TranscriptItem("")]
         return [_TranscriptItem(self._transcribe_text(str(audio[0])))]
@@ -316,7 +323,9 @@ class WhisperEngine:
     def start_streaming(self) -> WhisperStreamingSession:
         return WhisperStreamingSession(self)
 
-    def _transcribe_segments(self, audio: Any, *, word_timestamps: bool = False) -> list[Any]:
+    def _transcribe_segments(
+        self, audio: Any, *, word_timestamps: bool = False
+    ) -> list[Any]:
         kwargs: dict[str, Any] = {
             "language": "en",
             "condition_on_previous_text": False,
@@ -333,7 +342,9 @@ class WhisperEngine:
             raise ModelError(MODEL_TRANSCRIBE_FAILED, str(exc)) from exc
 
     def _transcribe_text(self, audio: Any) -> str:
-        return "".join(segment.text for segment in self._transcribe_segments(audio)).strip()
+        return "".join(
+            segment.text for segment in self._transcribe_segments(audio)
+        ).strip()
 
     def _transcribe_pcm_text(self, pcm: bytes) -> str:
         return self._transcribe_text(_pcm_to_waveform(pcm))
@@ -345,7 +356,9 @@ class WhisperEngine:
         offset_seconds: float,
     ) -> list[tuple[float, float, str]]:
         words: list[tuple[float, float, str]] = []
-        for segment in self._transcribe_segments(_pcm_to_waveform(pcm), word_timestamps=True):
+        for segment in self._transcribe_segments(
+            _pcm_to_waveform(pcm), word_timestamps=True
+        ):
             for word in getattr(segment, "words", None) or []:
                 words.append(
                     (
@@ -382,15 +395,18 @@ def load_engine(config: DictationConfig) -> WhisperEngine:
     device, compute_type = _compute_type(config, torch_module)
 
     try:
-        model = faster_whisper.WhisperModel(WHISPER_MODEL_ID, device=device, compute_type=compute_type)
+        model = faster_whisper.WhisperModel(
+            WHISPER_MODEL_ID, device=device, compute_type=compute_type
+        )
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
 
-    return WhisperEngine(model, device=device, compute_type=compute_type, model_id=WHISPER_MODEL_ID)
+    return WhisperEngine(
+        model, device=device, compute_type=compute_type, model_id=WHISPER_MODEL_ID
+    )
 
 
 def warmup(engine: WhisperEngine) -> None:
-    engine.eval()
     with engine._inference_lock:
         segments, _info = engine._model.transcribe(
             np.zeros(16000, dtype=np.float32),
@@ -403,16 +419,18 @@ def warmup(engine: WhisperEngine) -> None:
 
 
 def transcribe_wav(engine: WhisperEngine, path: str | Path) -> TranscriptionResult:
-    result = engine.transcribe([str(path)], verbose=False)
+    result = engine.transcribe([str(path)])
     first = result[0] if result else _TranscriptItem("")
-    transcript_text = getattr(first, "text", first if isinstance(first, str) else str(first))
+    transcript_text = getattr(
+        first, "text", first if isinstance(first, str) else str(first)
+    )
     return TranscriptionResult(
         text=transcript_text,
-        device=getattr(engine, "_parakeet_device", None),
+        device=getattr(engine, "_device", None),
         metadata={
             "backend": "whisper",
-            "compute_type": getattr(engine, "_parakeet_compute_type", None),
-            "model_id": getattr(engine, "_parakeet_model_id", WHISPER_MODEL_ID),
+            "compute_type": getattr(engine, "_compute_type", None),
+            "model_id": getattr(engine, "_model_id", WHISPER_MODEL_ID),
         },
     )
 
@@ -426,7 +444,11 @@ def check_model_cache(_env: Mapping[str, str] | None = None) -> dict[str, Any]:
         import_ready = False
         import_error = str(exc)
 
-    detail = "Whisper runtime imports look ready" if import_ready else "Whisper runtime imports failed"
+    detail = (
+        "Whisper runtime imports look ready"
+        if import_ready
+        else "Whisper runtime imports failed"
+    )
     return {
         "checked": True,
         "cache_present": None,

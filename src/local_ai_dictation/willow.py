@@ -7,24 +7,24 @@ selects Frontier Mini or Frontier Pro server-side according to the account plan.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import queue
 import secrets
 import sys
 import tempfile
 import threading
 import time
-from typing import Any, Iterable, Mapping, Sequence
+import wave
+import webbrowser
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
-import wave
-import webbrowser
 
 import msgpack
 from websockets.exceptions import ConnectionClosedOK
@@ -56,7 +56,9 @@ SUPABASE_PKCE_TOKEN_URL = "https://db.willowvoice.com/auth/v1/token?grant_type=p
 SUPABASE_AUTHORIZE_URL = "https://db.willowvoice.com/auth/v1/authorize"
 SUPABASE_PUBLIC_KEY = "sb_publishable_zK_SHENTsKCbRZP0-1mkeA_HUlYW4wM"
 WILLOW_OAUTH_REDIRECT_URL = "https://willowvoice.com/success-open-app"
-DEFAULT_SESSION_PATH = Path.home() / ".local" / "state" / "local-ai-dictation" / "willow-session.json"
+DEFAULT_SESSION_PATH = (
+    Path.home() / ".local" / "state" / "local-ai-dictation" / "willow-session.json"
+)
 PCM_PACKET_BYTES = 1024
 AUDIO_QUEUE_MAX_CHUNKS = 512
 AUDIO_QUEUE_PUT_TIMEOUT = 1.0
@@ -126,8 +128,12 @@ def _find_session(value: Any) -> WillowSession | None:
         return WillowSession(
             access_token=access_token,
             user_id=user_id if isinstance(user_id, str) and user_id else None,
-            refresh_token=refresh_token if isinstance(refresh_token, str) and refresh_token else None,
-            expires_at=float(expires_at) if isinstance(expires_at, (int, float)) else None,
+            refresh_token=refresh_token
+            if isinstance(refresh_token, str) and refresh_token
+            else None,
+            expires_at=float(expires_at)
+            if isinstance(expires_at, (int, float))
+            else None,
         )
     for item in value.values():
         found = _find_session(item)
@@ -150,7 +156,9 @@ def _write_owned_session(session: WillowSession, path: Path) -> None:
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, delete=False
+    ) as handle:
         temporary_path = Path(handle.name)
         os.chmod(temporary_path, 0o600)
         json.dump(payload, handle, separators=(",", ":"))
@@ -204,7 +212,10 @@ def _oauth_callback_code(callback_url: str) -> str:
         raise ModelError(MODEL_IMPORT_FAILED, f"Willow login failed: {error}")
     code = query.get("code", [""])[0].strip()
     if not code:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow login callback does not contain an authorization code")
+        raise ModelError(
+            MODEL_IMPORT_FAILED,
+            "Willow login callback does not contain an authorization code",
+        )
     return code
 
 
@@ -212,7 +223,11 @@ def _session_from_token_payload(payload: Any, missing_message: str) -> WillowSes
     session = _find_session(payload)
     if session is None:
         raise ModelError(MODEL_IMPORT_FAILED, missing_message)
-    if session.expires_at is None and isinstance(payload, dict) and isinstance(payload.get("expires_in"), (int, float)):
+    if (
+        session.expires_at is None
+        and isinstance(payload, dict)
+        and isinstance(payload.get("expires_in"), (int, float))
+    ):
         session = WillowSession(
             access_token=session.access_token,
             user_id=session.user_id,
@@ -238,7 +253,9 @@ def _http_error_message(exc: HTTPError) -> str:
 def _exchange_oauth_code(code: str, code_verifier: str) -> WillowSession:
     request = Request(
         SUPABASE_PKCE_TOKEN_URL,
-        data=json.dumps({"auth_code": code, "code_verifier": code_verifier}).encode("utf-8"),
+        data=json.dumps({"auth_code": code, "code_verifier": code_verifier}).encode(
+            "utf-8"
+        ),
         method="POST",
         headers={
             "apikey": SUPABASE_PUBLIC_KEY,
@@ -250,12 +267,21 @@ def _exchange_oauth_code(code: str, code_verifier: str) -> WillowSession:
         with urlopen(request, timeout=8.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        raise ModelError(MODEL_IMPORT_FAILED, f"Could not complete Willow Google login: {_http_error_message(exc)}") from exc
+        raise ModelError(
+            MODEL_IMPORT_FAILED,
+            f"Could not complete Willow Google login: {_http_error_message(exc)}",
+        ) from exc
     except Exception as exc:
-        raise ModelError(MODEL_IMPORT_FAILED, f"Could not complete Willow Google login: {exc}") from exc
-    session = _session_from_token_payload(payload, "Willow Google login returned no session")
+        raise ModelError(
+            MODEL_IMPORT_FAILED, f"Could not complete Willow Google login: {exc}"
+        ) from exc
+    session = _session_from_token_payload(
+        payload, "Willow Google login returned no session"
+    )
     if not session.refresh_token:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow Google login returned no refreshable session")
+        raise ModelError(
+            MODEL_IMPORT_FAILED, "Willow Google login returned no refreshable session"
+        )
     return session
 
 
@@ -267,7 +293,10 @@ def login_google_session(*, env: Mapping[str, str] | None = None) -> Path:
 
     opened = webbrowser.open(authorize_url)
     if not opened:
-        print(f"Open this Willow login URL in your browser:\n{authorize_url}", file=sys.stderr)
+        print(
+            f"Open this Willow login URL in your browser:\n{authorize_url}",
+            file=sys.stderr,
+        )
     print(
         "After Google login, copy the complete https://willowvoice.com/success-open-app?code=... URL "
         "from the browser address bar and paste it below.",
@@ -278,7 +307,9 @@ def login_google_session(*, env: Mapping[str, str] | None = None) -> Path:
         # plaintext and the user can verify it pasted correctly.
         callback_url = input("Callback URL: ").strip()
     except EOFError as exc:
-        raise ModelError(MODEL_IMPORT_FAILED, "Willow login callback was not provided") from exc
+        raise ModelError(
+            MODEL_IMPORT_FAILED, "Willow login callback was not provided"
+        ) from exc
     session = _exchange_oauth_code(_oauth_callback_code(callback_url), code_verifier)
     destination = session_path(env)
     _write_owned_session(session, destination)
@@ -307,11 +338,17 @@ def load_session(
             f"Willow session required. Run `local-ai-dictation willow-session login` or import a session. Session not found at {resolved_path}",
         ) from exc
     except (OSError, json.JSONDecodeError) as exc:
-        raise ModelError(MODEL_IMPORT_FAILED, f"Could not read Willow session at {resolved_path}: {exc}") from exc
+        raise ModelError(
+            MODEL_IMPORT_FAILED,
+            f"Could not read Willow session at {resolved_path}: {exc}",
+        ) from exc
 
     found = _find_session(payload)
     if found is None:
-        raise ModelError(WILLOW_AUTH_REQUIRED, f"Willow session at {resolved_path} does not contain an access token; log in again with `local-ai-dictation willow-session login`")
+        raise ModelError(
+            WILLOW_AUTH_REQUIRED,
+            f"Willow session at {resolved_path} does not contain an access token; log in again with `local-ai-dictation willow-session login`",
+        )
     if path is None and resolved_path == legacy_session_path(source):
         _write_owned_session(found, session_path(source))
     return found
@@ -319,7 +356,10 @@ def load_session(
 
 def _refresh_session(session: WillowSession) -> WillowSession:
     if not session.refresh_token:
-        raise ModelError(WILLOW_AUTH_REQUIRED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
+        raise ModelError(
+            WILLOW_AUTH_REQUIRED,
+            "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.",
+        )
     request = Request(
         SUPABASE_TOKEN_URL,
         data=json.dumps({"refresh_token": session.refresh_token}).encode("utf-8"),
@@ -339,25 +379,40 @@ def _refresh_session(session: WillowSession) -> WillowSession:
                 WILLOW_AUTH_REQUIRED,
                 f"Willow session expired. Run `local-ai-dictation willow-session login` ({_http_error_message(exc)})",
             ) from exc
-        raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {_http_error_message(exc)}") from exc
+        raise ModelError(
+            MODEL_IMPORT_FAILED,
+            f"Could not refresh Willow login: {_http_error_message(exc)}",
+        ) from exc
     except Exception as exc:
-        raise ModelError(MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {exc}") from exc
-    return _session_from_token_payload(payload, "Willow login refresh returned no session")
+        raise ModelError(
+            MODEL_IMPORT_FAILED, f"Could not refresh Willow login: {exc}"
+        ) from exc
+    return _session_from_token_payload(
+        payload, "Willow login refresh returned no session"
+    )
 
 
-def _replace_stored_session(value: Any, old_access_token: str, refreshed: WillowSession) -> tuple[Any, bool]:
+def _replace_stored_session(
+    value: Any, old_access_token: str, refreshed: WillowSession
+) -> tuple[Any, bool]:
     if isinstance(value, str):
         try:
             decoded = json.loads(value)
         except (json.JSONDecodeError, TypeError):
             return value, False
         updated, changed = _replace_stored_session(decoded, old_access_token, refreshed)
-        return (json.dumps(updated, separators=(",", ":")), True) if changed else (value, False)
+        return (
+            (json.dumps(updated, separators=(",", ":")), True)
+            if changed
+            else (value, False)
+        )
     if isinstance(value, list):
         changed = False
         updated_items = []
         for item in value:
-            updated, item_changed = _replace_stored_session(item, old_access_token, refreshed)
+            updated, item_changed = _replace_stored_session(
+                item, old_access_token, refreshed
+            )
             updated_items.append(updated)
             changed = changed or item_changed
         return updated_items, changed
@@ -376,19 +431,25 @@ def _replace_stored_session(value: Any, old_access_token: str, refreshed: Willow
     changed = False
     updated_mapping = {}
     for key, item in value.items():
-        updated, item_changed = _replace_stored_session(item, old_access_token, refreshed)
+        updated, item_changed = _replace_stored_session(
+            item, old_access_token, refreshed
+        )
         updated_mapping[key] = updated
         changed = changed or item_changed
     return updated_mapping, changed
 
 
-def _persist_refreshed_session(path: Path, old_access_token: str, refreshed: WillowSession) -> None:
+def _persist_refreshed_session(
+    path: Path, old_access_token: str, refreshed: WillowSession
+) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     updated, changed = _replace_stored_session(payload, old_access_token, refreshed)
     if not changed:
         return
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, delete=False
+    ) as handle:
         temporary_path = Path(handle.name)
         os.chmod(temporary_path, 0o600)
         json.dump(updated, handle, separators=(",", ":"))
@@ -411,16 +472,27 @@ class WillowProtocol:
     def encode(self, key: str, data: Any) -> list[bytes]:
         sequence = self._next_sequence
         self._next_sequence += 1
-        packed = msgpack.packb({"seq": sequence, "d": {"key": key, "data": data}}, use_bin_type=True)
+        packed = msgpack.packb(
+            {"seq": sequence, "d": {"key": key, "data": data}}, use_bin_type=True
+        )
         if len(packed) <= self._maximum_message_bytes:
             return [packed]
 
         payload_size = self._maximum_message_bytes - 128
-        chunks = [packed[offset : offset + payload_size] for offset in range(0, len(packed), payload_size)]
+        chunks = [
+            packed[offset : offset + payload_size]
+            for offset in range(0, len(packed), payload_size)
+        ]
         chunk_id = str(uuid4())
         return [
             msgpack.packb(
-                {"id": chunk_id, "seq": sequence, "idx": index, "tot": len(chunks), "bin": chunk},
+                {
+                    "id": chunk_id,
+                    "seq": sequence,
+                    "idx": index,
+                    "tot": len(chunks),
+                    "bin": chunk,
+                },
                 use_bin_type=True,
             )
             for index, chunk in enumerate(chunks)
@@ -454,14 +526,27 @@ class WillowProtocol:
             raise ValueError("Too many incomplete chunked messages")
         assembly = self._assemblies.setdefault(
             chunk_id,
-            {"seq": sequence, "total": total, "parts": {}, "bytes": 0, "created": time.monotonic()},
+            {
+                "seq": sequence,
+                "total": total,
+                "parts": {},
+                "bytes": 0,
+                "created": time.monotonic(),
+            },
         )
-        if assembly["seq"] != sequence or assembly["total"] != total or index in assembly["parts"]:
+        if (
+            assembly["seq"] != sequence
+            or assembly["total"] != total
+            or index in assembly["parts"]
+        ):
             removed = self._assemblies.pop(chunk_id, None)
             if removed is not None:
                 self._buffered_bytes -= removed["bytes"]
             raise ValueError("Inconsistent or duplicate protocol chunk")
-        if assembly["bytes"] + len(part) > MAX_MESSAGE_BYTES or self._buffered_bytes + len(part) > MAX_MESSAGE_BYTES:
+        if (
+            assembly["bytes"] + len(part) > MAX_MESSAGE_BYTES
+            or self._buffered_bytes + len(part) > MAX_MESSAGE_BYTES
+        ):
             removed = self._assemblies.pop(chunk_id, None)
             if removed is not None:
                 self._buffered_bytes -= removed["bytes"]
@@ -476,7 +561,11 @@ class WillowProtocol:
         self._assemblies.pop(chunk_id, None)
         self._buffered_bytes -= assembly["bytes"]
         envelope = msgpack.unpackb(packed, raw=False)
-        if not isinstance(envelope, dict) or envelope.get("seq") != sequence or not isinstance(envelope.get("d"), dict):
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("seq") != sequence
+            or not isinstance(envelope.get("d"), dict)
+        ):
             raise ValueError("Chunk payload is not a matching logical envelope")
         return envelope
 
@@ -490,7 +579,11 @@ def _extract_transcript(envelope: Mapping[str, Any]) -> str | None:
         actions = data
     elif isinstance(data, dict) and isinstance(data.get("actions"), list):
         actions = data["actions"]
-    elif isinstance(data, dict) and isinstance(data.get("result"), dict) and isinstance(data["result"].get("actions"), list):
+    elif (
+        isinstance(data, dict)
+        and isinstance(data.get("result"), dict)
+        and isinstance(data["result"].get("actions"), list)
+    ):
         actions = data["result"]["actions"]
     else:
         actions = []
@@ -512,7 +605,9 @@ class WillowStreamingSession:
 
     def __init__(self, engine: "WillowEngine") -> None:
         self._engine = engine
-        self._audio_queue: queue.Queue[object] = queue.Queue(maxsize=AUDIO_QUEUE_MAX_CHUNKS)
+        self._audio_queue: queue.Queue[object] = queue.Queue(
+            maxsize=AUDIO_QUEUE_MAX_CHUNKS
+        )
         self._cancelled = threading.Event()
         self._ready = threading.Event()
         self._finished = threading.Event()
@@ -526,17 +621,27 @@ class WillowStreamingSession:
         self._thread.start()
 
     def wait_ready(self) -> None:
-        deadline = time.monotonic() + self._engine._bounded_timeout(self._engine._connect_timeout + 1.0)
+        deadline = time.monotonic() + self._engine._bounded_timeout(
+            self._engine._connect_timeout + 1.0
+        )
         while not self._ready.is_set():
             if self._cancelled.is_set():
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled"
+                )
             if self._finished.is_set():
                 self._raise_if_failed()
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session ended before it was ready")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED,
+                    "Willow streaming session ended before it was ready",
+                )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self.cancel()
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out preparing Willow streaming session")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED,
+                    "Timed out preparing Willow streaming session",
+                )
             self._ready.wait(timeout=min(0.05, remaining))
 
     def send_audio(self, pcm: bytes) -> None:
@@ -554,10 +659,15 @@ class WillowStreamingSession:
         self._enqueue(bytes(pcm), deadline=time.monotonic() + AUDIO_QUEUE_PUT_TIMEOUT)
 
     def finish(self) -> str:
-        budget = self._engine._bounded_timeout(self._engine._connect_timeout + self._engine._result_timeout + 2.0)
+        budget = self._engine._bounded_timeout(
+            self._engine._connect_timeout + self._engine._result_timeout + 2.0
+        )
         if budget <= 0:
             self.cancel()
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out waiting for Willow streaming transcription")
+            raise ModelError(
+                MODEL_TRANSCRIBE_FAILED,
+                "Timed out waiting for Willow streaming transcription",
+            )
         deadline = time.monotonic() + budget
         enqueue_finish = False
         with self._state_lock:
@@ -569,10 +679,15 @@ class WillowStreamingSession:
         remaining = deadline - time.monotonic()
         if remaining <= 0 or not self._finished.wait(timeout=remaining):
             self.cancel()
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out waiting for Willow streaming transcription")
+            raise ModelError(
+                MODEL_TRANSCRIBE_FAILED,
+                "Timed out waiting for Willow streaming transcription",
+            )
         self._raise_if_failed()
         if self._cancelled.is_set():
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+            raise ModelError(
+                MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled"
+            )
         return self._transcript or ""
 
     def cancel(self) -> None:
@@ -621,12 +736,16 @@ class WillowStreamingSession:
                         opened.close()
                     except Exception:
                         pass
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled"
+                )
             opener.join(timeout=0.05)
         if "error" in holder:
             raise holder["error"]
         if "socket" not in holder:
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+            raise ModelError(
+                MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled"
+            )
         return holder["socket"]
 
     def _raise_if_failed(self) -> None:
@@ -636,10 +755,14 @@ class WillowStreamingSession:
     def _enqueue(self, item: object, *, deadline: float) -> None:
         while not self._finished.is_set():
             if self._cancelled.is_set():
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED, "Willow streaming session was cancelled"
+                )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out queueing Willow audio")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED, "Timed out queueing Willow audio"
+                )
             try:
                 self._audio_queue.put(item, timeout=min(0.1, remaining))
                 return
@@ -674,7 +797,9 @@ class WillowStreamingSession:
                 if self._cancelled.is_set():
                     return
                 if len(pending) % 2:
-                    raise ValueError("Willow PCM stream ended with an incomplete sample")
+                    raise ValueError(
+                        "Willow PCM stream ended with an incomplete sample"
+                    )
                 if pending:
                     self._engine._send(socket, protocol, "audio_packet", bytes(pending))
                 self._engine._send(socket, protocol, "flush_packet", {})
@@ -742,26 +867,25 @@ class WillowEngine:
             endpoint=source.get("WILLOW_TRANSCRIBE_URL", PRODUCTION_TRANSCRIBE_URL),
             refresh_token=session.refresh_token,
             expires_at=session.expires_at,
-            session_file=None if source.get("WILLOW_ACCESS_TOKEN") else resolve_session_path(source),
+            session_file=None
+            if source.get("WILLOW_ACCESS_TOKEN")
+            else resolve_session_path(source),
         )
 
-    def to(self, device: str) -> "WillowEngine":
-        return self
-
-    def eval(self) -> "WillowEngine":
-        return self
-
-    def parameters(self) -> Iterable[Any]:
-        return iter(())
-
-    def transcribe(self, audio: Sequence[str], *, verbose: bool = False) -> list[Any]:
+    def transcribe(self, audio: Sequence[str]) -> list[Any]:
         text = self.transcribe_path(Path(audio[0])) if audio else ""
         return [type("WillowTranscript", (), {"text": text})()]
 
     def transcribe_path(self, path: Path) -> str:
         with wave.open(str(path), "rb") as handle:
-            if handle.getnchannels() != 1 or handle.getsampwidth() != 2 or handle.getframerate() != 16_000:
-                raise ValueError("Willow requires 16 kHz mono signed 16-bit PCM WAV input")
+            if (
+                handle.getnchannels() != 1
+                or handle.getsampwidth() != 2
+                or handle.getframerate() != 16_000
+            ):
+                raise ValueError(
+                    "Willow requires 16 kHz mono signed 16-bit PCM WAV input"
+                )
             pcm = handle.readframes(handle.getnframes())
         return self.transcribe_pcm(pcm)
 
@@ -774,13 +898,21 @@ class WillowEngine:
         return WillowStreamingSession(self)
 
     def _open_socket(self):
-        query = {"interactionID": str(uuid4()), "client": "linux", "protocol_version": "3"}
+        query = {
+            "interactionID": str(uuid4()),
+            "client": "linux",
+            "protocol_version": "3",
+        }
         if self._user_id:
             query["userID"] = self._user_id
-        endpoint = f"{self._endpoint}{'&' if '?' in self._endpoint else '?'}{urlencode(query)}"
+        endpoint = (
+            f"{self._endpoint}{'&' if '?' in self._endpoint else '?'}{urlencode(query)}"
+        )
         open_timeout = self._bounded_timeout(self._connect_timeout)
         if open_timeout <= 0:
-            raise ModelError(MODEL_TRANSCRIBE_FAILED, "Timed out preparing Willow streaming session")
+            raise ModelError(
+                MODEL_TRANSCRIBE_FAILED, "Timed out preparing Willow streaming session"
+            )
         return connect(
             endpoint,
             additional_headers={"Authorization": f"Bearer {self._access_token}"},
@@ -788,9 +920,16 @@ class WillowEngine:
             close_timeout=0.5,
         )
 
-    def _initialize_realtime_socket(self, socket: Any, protocol: WillowProtocol) -> None:
+    def _initialize_realtime_socket(
+        self, socket: Any, protocol: WillowProtocol
+    ) -> None:
         self._send(socket, protocol, "health_packet", {})
-        self._wait_for(socket, protocol, "health_packet", self._bounded_timeout(self._connect_timeout))
+        self._wait_for(
+            socket,
+            protocol,
+            "health_packet",
+            self._bounded_timeout(self._connect_timeout),
+        )
         for key, data in (
             ("selected_languages", []),
             ("glossary", []),
@@ -829,7 +968,9 @@ class WillowEngine:
             socket.send(wire)
 
     @staticmethod
-    def _receive(socket: Any, protocol: WillowProtocol, timeout: float) -> dict[str, Any]:
+    def _receive(
+        socket: Any, protocol: WillowProtocol, timeout: float
+    ) -> dict[str, Any]:
         while True:
             wire = socket.recv(timeout=timeout)
             if isinstance(wire, str):
@@ -838,12 +979,17 @@ class WillowEngine:
             if envelope is not None:
                 return envelope
 
-    def _wait_for(self, socket: Any, protocol: WillowProtocol, key: str, timeout: float) -> dict[str, Any]:
+    def _wait_for(
+        self, socket: Any, protocol: WillowProtocol, key: str, timeout: float
+    ) -> dict[str, Any]:
         while True:
             envelope = self._receive(socket, protocol, timeout)
             descriptor = envelope.get("d", {})
             if descriptor.get("key") == "error":
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow protocol error: {descriptor.get('data')}")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED,
+                    f"Willow protocol error: {descriptor.get('data')}",
+                )
             if descriptor.get("key") == key:
                 return envelope
 
@@ -855,7 +1001,10 @@ class WillowEngine:
                 return ""
             descriptor = envelope.get("d", {})
             if descriptor.get("key") == "error":
-                raise ModelError(MODEL_TRANSCRIBE_FAILED, f"Willow protocol error: {descriptor.get('data')}")
+                raise ModelError(
+                    MODEL_TRANSCRIBE_FAILED,
+                    f"Willow protocol error: {descriptor.get('data')}",
+                )
             transcript = _extract_transcript(envelope)
             if transcript is not None:
                 return transcript
@@ -863,10 +1012,6 @@ class WillowEngine:
 
 def load_engine(config: DictationConfig) -> WillowEngine:
     return WillowEngine.from_config(config)
-
-
-def warmup(engine: WillowEngine) -> None:
-    engine.eval()
 
 
 def transcribe_wav(engine: WillowEngine, path: str | Path) -> TranscriptionResult:
@@ -889,8 +1034,15 @@ def transcribe_wav(engine: WillowEngine, path: str | Path) -> TranscriptionResul
 def check_model_cache(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     try:
         session = load_session(env=env)
-        if session.expires_at is not None and session.expires_at <= time.time() + 60 and not session.refresh_token:
-            raise ModelError(WILLOW_AUTH_REQUIRED, "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.")
+        if (
+            session.expires_at is not None
+            and session.expires_at <= time.time() + 60
+            and not session.refresh_token
+        ):
+            raise ModelError(
+                WILLOW_AUTH_REQUIRED,
+                "Willow session expired. Run `local-ai-dictation willow-session login` or import a fresh session.",
+            )
         ready = True
         error = None
     except ModelError as exc:
@@ -903,5 +1055,7 @@ def check_model_cache(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         "model_id": "willow/frontier-auto",
         "import_ready": ready,
         "import_error": error,
-        "detail": "Willow cloud session is ready" if ready else "Willow cloud login is required",
+        "detail": "Willow cloud session is ready"
+        if ready
+        else "Willow cloud login is required",
     }

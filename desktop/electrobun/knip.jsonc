@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "electrobun.config.ts",
+    "src/bun/index.ts",
+    "src/mainview/index.ts",
+    "src/**/*.test.ts",
+  ],
+  "project": ["**/*.ts"],
+  // The Python desktop installer executes rcedit/bin/rcedit-x64.exe on Windows.
+  "ignoreDependencies": ["rcedit"],
+}

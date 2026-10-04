@@ -3,16 +3,15 @@ from __future__ import annotations
 import importlib
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-import sys
+from pathlib import Path
 from typing import Any
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -22,7 +21,9 @@ if str(SRC) not in sys.path:
 bridge_module = importlib.import_module("local_ai_dictation.bridge")
 BridgeStateError = bridge_module.BridgeStateError
 DictationBridgeController = bridge_module.DictationBridgeController
-TranscriptionResult = importlib.import_module("local_ai_dictation.types").TranscriptionResult
+TranscriptionResult = importlib.import_module(
+    "local_ai_dictation.types"
+).TranscriptionResult
 
 
 class _ClipboardSuccess:
@@ -38,19 +39,19 @@ class _ClipboardFailure:
         raise RuntimeError("clipboard backend unavailable")
 
 
-def _runtime_loader(debug: bool):
+def _runtime_loader(_backend: str, _debug: bool):
     return object(), object(), _ClipboardSuccess(), object()
 
 
 def _make_runtime_loader(clipboard_module: Any):
-    def _loader(debug: bool):
+    def _loader(_backend: str, _debug: bool):
         return object(), object(), clipboard_module, object()
 
     return _loader
 
 
 def _make_model_loader(delay: float = 0.0, calls: list[int] | None = None):
-    def _loader(config, nemo_asr, torch_module, *, status_stream=None):
+    def _loader(config, _runtime_module, torch_module, *, status_stream=None):
         if calls is not None:
             calls.append(1)
         if status_stream is not None:
@@ -62,7 +63,14 @@ def _make_model_loader(delay: float = 0.0, calls: list[int] | None = None):
     return _loader
 
 
-def _recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None):
+def _recorder(
+    config,
+    pyaudio_module,
+    sample_rate=16000,
+    *,
+    stop_requested=None,
+    status_stream=None,
+):
     if status_stream is not None:
         status_stream.write("🎤 Recording...\n")
     deadline = time.time() + 2.0
@@ -76,7 +84,12 @@ def _recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None,
 def _transcriber(config, model, audio_data, sample_rate, *, status_stream=None):
     if status_stream is not None:
         status_stream.write("🤖 Generating...\n")
-    return TranscriptionResult(text="fake transcript", device="cpu"), "/tmp/fake.wav", 0.0, 0.0
+    return (
+        TranscriptionResult(text="fake transcript", device="cpu"),
+        "/tmp/fake.wav",
+        0.0,
+        0.0,
+    )
 
 
 def _reserve_local_port() -> int:
@@ -110,7 +123,9 @@ def _wait_for_json(url: str, predicate, *, timeout: float = 3.0) -> dict[str, An
         if predicate(payload):
             return payload
         time.sleep(0.02)
-    raise AssertionError(f"Timed out waiting for expected payload from {url}: {last_payload}")
+    raise AssertionError(
+        f"Timed out waiting for expected payload from {url}: {last_payload}"
+    )
 
 
 def test_bridge_start_rejects_double_start():
@@ -182,12 +197,24 @@ def test_bridge_stop_while_willow_handshake_pending_cancels_cleanly():
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         recorder_started.set()
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         deadline = time.monotonic() + 2.0
-        while stop_requested is not None and not stop_requested() and time.monotonic() < deadline:
+        while (
+            stop_requested is not None
+            and not stop_requested()
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.01)
         return b""
 
@@ -217,7 +244,9 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
 
     class StreamingSession:
         def wait_ready(self) -> None:
-            raise bridge_module.ModelError("MODEL_TRANSCRIBE_FAILED", "Willow handshake failed")
+            raise bridge_module.ModelError(
+                "MODEL_TRANSCRIBE_FAILED", "Willow handshake failed"
+            )
 
         def send_audio(self, pcm: bytes) -> None:
             return
@@ -235,7 +264,15 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -246,7 +283,9 @@ def test_bridge_surfaces_willow_readiness_failure_after_audio(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -298,7 +337,15 @@ def test_bridge_marks_willow_auth_failure_as_auth_required(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -309,7 +356,9 @@ def test_bridge_marks_willow_auth_failure_as_auth_required(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -389,7 +438,15 @@ def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -400,7 +457,9 @@ def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -439,8 +498,15 @@ def test_willow_retry_policy_is_two_tries_then_twenty_seconds():
         "Willow transcription failed: server rejected WebSocket connection: HTTP 401",
     )
 
-    assert bridge_module.DictationBridgeController._should_retry_streaming_error(config, dns_error, 0)
-    assert bridge_module.DictationBridgeController._should_retry_streaming_error(config, auth_error, 0) is False
+    assert bridge_module.DictationBridgeController._should_retry_streaming_error(
+        config, dns_error, 0
+    )
+    assert (
+        bridge_module.DictationBridgeController._should_retry_streaming_error(
+            config, auth_error, 0
+        )
+        is False
+    )
 
 
 def test_bridge_retries_willow_close_frame_then_returns_text(monkeypatch):
@@ -480,7 +546,15 @@ def test_bridge_retries_willow_close_frame_then_returns_text(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -490,7 +564,9 @@ def test_bridge_retries_willow_close_frame_then_returns_text(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -530,7 +606,9 @@ def test_bridge_finalize_deadline_frees_the_next_recording(monkeypatch):
 
         def finish(self) -> str:
             if not self.cancelled.wait(timeout=5):
-                raise AssertionError("finalize deadline did not cancel the hung Willow session")
+                raise AssertionError(
+                    "finalize deadline did not cancel the hung Willow session"
+                )
             raise bridge_module.ModelError(
                 "MODEL_TRANSCRIBE_FAILED",
                 "Willow transcription failed: no close frame received or sent",
@@ -546,7 +624,15 @@ def test_bridge_finalize_deadline_frees_the_next_recording(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -556,7 +642,9 @@ def test_bridge_finalize_deadline_frees_the_next_recording(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -620,7 +708,15 @@ def test_bridge_retries_when_the_second_connection_also_fails(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -630,7 +726,9 @@ def test_bridge_retries_when_the_second_connection_also_fails(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -665,7 +763,9 @@ def test_bridge_does_not_apply_willow_deadline_to_whisper(monkeypatch):
         def finish(self) -> str:
             time.sleep(0.2)
             if cancelled.is_set():
-                raise AssertionError("Willow deadline cancelled a local Whisper transcription")
+                raise AssertionError(
+                    "Willow deadline cancelled a local Whisper transcription"
+                )
             return "local transcript"
 
         def cancel(self) -> None:
@@ -678,7 +778,15 @@ def test_bridge_does_not_apply_willow_deadline_to_whisper(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -688,7 +796,9 @@ def test_bridge_does_not_apply_willow_deadline_to_whisper(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="whisper",
         runtime_loader=_runtime_loader,
@@ -736,7 +846,10 @@ def test_bridge_warms_whisper_before_accepting_recording(monkeypatch):
 
     release_warmup.set()
     deadline = time.monotonic() + 1
-    while controller.get_session_payload()["model_loading"] and time.monotonic() < deadline:
+    while (
+        controller.get_session_payload()["model_loading"]
+        and time.monotonic() < deadline
+    ):
         time.sleep(0.01)
 
     started = controller.start_session()
@@ -806,7 +919,15 @@ def test_willow_bridge_streams_audio_while_recording(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         assert sample_rate == 16000
         assert on_audio_chunk is not None
         if status_stream is not None:
@@ -814,7 +935,11 @@ def test_willow_bridge_streams_audio_while_recording(monkeypatch):
         pcm = b"\x01\x00" * 1600
         on_audio_chunk(pcm)
         deadline = time.monotonic() + 2.0
-        while stop_requested is not None and not stop_requested() and time.monotonic() < deadline:
+        while (
+            stop_requested is not None
+            and not stop_requested()
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.01)
         return pcm
 
@@ -823,7 +948,9 @@ def test_willow_bridge_streams_audio_while_recording(monkeypatch):
         batch_transcriber_called = True
         raise AssertionError("Willow should not use batch transcription")
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -877,7 +1004,7 @@ def test_whisper_bridge_uses_streaming_model(monkeypatch):
             pass
 
     class StreamingModel:
-        _parakeet_device = "cuda"
+        _device = "cuda"
 
         def start_streaming(self) -> StreamingSession:
             return StreamingSession()
@@ -885,7 +1012,15 @@ def test_whisper_bridge_uses_streaming_model(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), True, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         assert sample_rate == 16000
         assert on_audio_chunk is not None
         if status_stream is not None:
@@ -901,7 +1036,9 @@ def test_whisper_bridge_uses_streaming_model(monkeypatch):
         batch_called = True
         raise AssertionError("Whisper should use rolling transcription")
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="whisper",
         runtime_loader=_runtime_loader,
@@ -951,7 +1088,7 @@ def test_bridge_timeout_requests_cancel_without_waiting_for_whisper_worker(monke
             return release_inference.wait(timeout=timeout)
 
     class StreamingModel:
-        _parakeet_device = "cuda"
+        _device = "cuda"
 
         def start_streaming(self) -> StreamingSession:
             return StreamingSession()
@@ -959,7 +1096,15 @@ def test_bridge_timeout_requests_cancel_without_waiting_for_whisper_worker(monke
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), True, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -968,7 +1113,9 @@ def test_bridge_timeout_requests_cancel_without_waiting_for_whisper_worker(monke
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="whisper",
         runtime_loader=_runtime_loader,
@@ -1028,7 +1175,10 @@ def test_bridge_retains_audio_only_when_explicitly_enabled(tmp_path: Path):
     retained_controller.shutdown()
 
     retained = sorted(retained_dir.glob("*.wav"))
-    assert [path.name for path in retained] == ["last-capture-16k.wav", "last-capture-raw.wav"]
+    assert [path.name for path in retained] == [
+        "last-capture-16k.wav",
+        "last-capture-raw.wav",
+    ]
     assert retained_dir.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in retained)
 
@@ -1063,12 +1213,15 @@ def test_bridge_records_recording_clipboard_and_paste_timestamps():
     assert completed["last_completed_at"] is not None
     assert completed["clipboard_copied_at"] is not None
     assert completed["paste_dispatched_at"] is not None
-    assert completed["clipboard_copied_at"] <= completed["paste_dispatched_at"] <= completed["last_completed_at"]
+    assert (
+        completed["clipboard_copied_at"]
+        <= completed["paste_dispatched_at"]
+        <= completed["last_completed_at"]
+    )
     assert clipboard.calls == ["fake transcript"]
     assert paste_calls == ["fake transcript"]
 
     controller.shutdown()
-
 
 
 def test_bridge_leaves_clipboard_timestamp_unset_when_copy_fails():
@@ -1091,7 +1244,6 @@ def test_bridge_leaves_clipboard_timestamp_unset_when_copy_fails():
     controller.shutdown()
 
 
-
 def test_bridge_status_notifier_fires_on_state_changes():
     notifications: list[str] = []
     controller = DictationBridgeController(
@@ -1100,7 +1252,9 @@ def test_bridge_status_notifier_fires_on_state_changes():
         recorder=_recorder,
         transcriber=_transcriber,
         transcript_timeout=1.0,
-        status_notifier=lambda: notifications.append(controller.get_session_payload()["state"]),
+        status_notifier=lambda: notifications.append(
+            controller.get_session_payload()["state"]
+        ),
     )
 
     started = controller.start_session()
@@ -1117,7 +1271,6 @@ def test_bridge_status_notifier_fires_on_state_changes():
     controller.shutdown()
 
 
-
 def test_bridge_server_health_and_session_endpoints():
     controller = DictationBridgeController(
         runtime_loader=_runtime_loader,
@@ -1127,12 +1280,16 @@ def test_bridge_server_health_and_session_endpoints():
         transcript_timeout=1.0,
     )
     server = bridge_module.make_bridge_server("127.0.0.1", 0, controller=controller)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     port = server.server_address[1]
 
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=2
+        ) as response:
             health = json.load(response)
         assert health["schema_version"] == 1
         assert health["session"]["state"] == "stopped"
@@ -1177,7 +1334,9 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
             return
 
         def finish(self) -> str:
-            raise bridge_module.ModelError("MODEL_TRANSCRIBE_FAILED", "Willow result timeout")
+            raise bridge_module.ModelError(
+                "MODEL_TRANSCRIBE_FAILED", "Willow result timeout"
+            )
 
         def cancel(self) -> None:
             return
@@ -1189,7 +1348,15 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
     def model_loader(config, runtime_module, torch_module, *, status_stream=None):
         return StreamingModel(), False, 0.0, 0.0
 
-    def recorder(config, pyaudio_module, sample_rate=16000, *, stop_requested=None, status_stream=None, on_audio_chunk=None):
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
         if status_stream is not None:
             status_stream.write("🎤 Recording...\n")
         pcm = b"\x01\x00" * 1600
@@ -1200,7 +1367,9 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
             time.sleep(0.01)
         return pcm
 
-    monkeypatch.setattr(bridge_module, "has_probable_speech", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
     controller = DictationBridgeController(
         backend="willow",
         runtime_loader=_runtime_loader,
@@ -1210,7 +1379,9 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
         transcript_timeout=1.0,
     )
     server = bridge_module.make_bridge_server("127.0.0.1", 0, controller=controller)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     port = server.server_address[1]
 
@@ -1237,7 +1408,9 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
             assert error.code == 500
             failed = json.load(error)
         else:
-            raise AssertionError("Willow finalization failures must not return HTTP 200")
+            raise AssertionError(
+                "Willow finalization failures must not return HTTP 200"
+            )
 
         assert failed["state"] == "error"
         assert failed["last_error"] == "MODEL_TRANSCRIBE_FAILED: Willow result timeout"
@@ -1255,13 +1428,21 @@ def test_hyprland_paste_notifier_uses_terminal_shortcut(monkeypatch):
     def run(command, **kwargs):
         calls.append(command)
         if command[-1] == "activewindow":
-            return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"class": "com.mitchellh.ghostty"}))
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps({"class": "com.mitchellh.ghostty"})
+            )
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(bridge_module.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None)
+    monkeypatch.setattr(
+        bridge_module.shutil,
+        "which",
+        lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None,
+    )
     monkeypatch.setattr(bridge_module.subprocess, "run", run)
 
-    notifier = bridge_module._build_hyprland_paste_notifier({"LOCAL_AI_DICTATION_HYPRLAND_PASTE": "1"})
+    notifier = bridge_module._build_hyprland_paste_notifier(
+        {"LOCAL_AI_DICTATION_HYPRLAND_PASTE": "1"}
+    )
 
     assert notifier is not None
     assert notifier() is True
@@ -1306,9 +1487,10 @@ def test_build_bridge_controller_from_namespace_reads_e2e_env():
     controller.shutdown()
 
 
-
 def test_build_bridge_controller_from_namespace_parses_numeric_input_device():
-    namespace = type("Namespace", (), {"cpu": False, "clipboard": True, "input_device": "7"})()
+    namespace = type(
+        "Namespace", (), {"cpu": False, "clipboard": True, "input_device": "7"}
+    )()
 
     controller = bridge_module.build_bridge_controller_from_namespace(namespace, env={})
 
@@ -1326,7 +1508,16 @@ def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
     env["LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS"] = "40"
 
     process = subprocess.Popen(
-        [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", "127.0.0.1", "--port", str(port)],
+        [
+            sys.executable,
+            "-m",
+            "local_ai_dictation.cli",
+            "bridge",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
         cwd=ROOT,
         env=env,
         stdout=subprocess.PIPE,
@@ -1365,7 +1556,9 @@ def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
             f"http://127.0.0.1:{port}/session",
             lambda payload: len(payload.get("history", [])) == 1,
         )
-        assert session["history"][0]["payload"]["transcript"] == "deterministic transcript"
+        assert (
+            session["history"][0]["payload"]["transcript"] == "deterministic transcript"
+        )
 
         toggle_started = _post_json(f"http://127.0.0.1:{port}/session/toggle")
         assert toggle_started["state"] == "starting"

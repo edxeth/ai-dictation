@@ -1,16 +1,15 @@
-"""Audio device enumeration helpers and VAD capture utilities for Parakeet."""
+"""Audio device enumeration helpers and VAD capture utilities for AI Dictation."""
 
 from __future__ import annotations
 
 import audioop
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from local_ai_dictation.types import AudioDevice, VadBackend
-
 
 PyAudioModule = Any
 VAD_SAMPLE_RATE = 16000
@@ -68,7 +67,9 @@ def _host_api_name(pa: Any, info: dict[str, Any]) -> str:
         return "unknown"
 
 
-def list_input_devices(pyaudio_module: PyAudioModule | None = None) -> list[AudioDevice]:
+def list_input_devices(
+    pyaudio_module: PyAudioModule | None = None,
+) -> list[AudioDevice]:
     pyaudio_module = _load_pyaudio_module(pyaudio_module)
     pa = pyaudio_module.PyAudio()
     try:
@@ -88,7 +89,9 @@ def list_input_devices(pyaudio_module: PyAudioModule | None = None) -> list[Audi
                     default_sample_rate=int(info.get("defaultSampleRate", 0)),
                     max_input_channels=max_input_channels,
                     host_api=_host_api_name(pa, info),
-                    is_default_candidate=(default_input_id is not None and device_id == default_input_id),
+                    is_default_candidate=(
+                        default_input_id is not None and device_id == default_input_id
+                    ),
                 )
             )
 
@@ -111,7 +114,9 @@ def resolve_input_device_id(
     if input_device is None:
         if os.name == "posix":
             try:
-                return _preferred_linux_input_device_id(list_input_devices(pyaudio_module))
+                return _preferred_linux_input_device_id(
+                    list_input_devices(pyaudio_module)
+                )
             except Exception:
                 return None
         return None
@@ -246,7 +251,9 @@ def downmix_pcm16_to_mono(audio_data: bytes, channels: int) -> bytes:
 class Pcm16StreamConverter:
     """Incrementally converts native PCM16 capture into mono model-rate PCM."""
 
-    def __init__(self, input_sample_rate: int, input_channels: int, output_sample_rate: int) -> None:
+    def __init__(
+        self, input_sample_rate: int, input_channels: int, output_sample_rate: int
+    ) -> None:
         if input_channels not in {1, 2}:
             raise ValueError(f"Unsupported channel count for downmix: {input_channels}")
         self._input_sample_rate = input_sample_rate
@@ -291,7 +298,9 @@ def resample_pcm16_mono(
 ) -> bytes:
     if not audio_data or input_sample_rate == output_sample_rate:
         return audio_data
-    converted, _state = audioop.ratecv(audio_data, 2, 1, input_sample_rate, output_sample_rate, None)
+    converted, _state = audioop.ratecv(
+        audio_data, 2, 1, input_sample_rate, output_sample_rate, None
+    )
     return converted
 
 
@@ -453,10 +462,13 @@ def probe_audio_backend(
             "detail": "pactl info succeeded",
         }
 
-    combined_output = "\n".join(part for part in [completed.stdout.strip(), completed.stderr.strip()] if part)
+    combined_output = "\n".join(
+        part for part in [completed.stdout.strip(), completed.stderr.strip()] if part
+    )
     status = _classify_probe_failure(combined_output)
     return {
         "status": status,
         "transport": transport,
-        "detail": combined_output or f"pactl info exited with status {completed.returncode}",
+        "detail": combined_output
+        or f"pactl info exited with status {completed.returncode}",
     }

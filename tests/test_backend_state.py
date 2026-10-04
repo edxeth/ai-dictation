@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from local_ai_dictation.backend_state import get_backend, set_backend, state_path, toggle_backend
 import local_ai_dictation.cli as cli
+from local_ai_dictation.backend_state import (
+    get_backend,
+    set_backend,
+    state_path,
+    toggle_backend,
+)
 from local_ai_dictation.cli import main
 from local_ai_dictation.desktop import bridge_start_command
 
@@ -82,24 +87,33 @@ def test_restart_bridge_uses_requested_custom_endpoint(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(cli, "_wait_for_bridge_ready", lambda host, port: True)
 
     popen_calls: list[list[str]] = []
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda command, **kwargs: popen_calls.append(command))
+    monkeypatch.setattr(
+        cli.subprocess, "Popen", lambda command, **kwargs: popen_calls.append(command)
+    )
 
     cli._restart_local_bridge("127.0.0.1", 40125)
 
-    assert popen_calls == [[
-        cli.sys.executable,
-        "-m",
-        "local_ai_dictation.cli",
-        "bridge",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "40125",
-    ]]
+    assert popen_calls == [
+        [
+            cli.sys.executable,
+            "-m",
+            "local_ai_dictation.cli",
+            "bridge",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "40125",
+        ]
+    ]
 
 
-def test_bridge_start_command_uses_persisted_backend_when_not_overridden(tmp_path: Path, monkeypatch):
+def test_bridge_start_command_uses_persisted_backend_when_not_overridden(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     set_backend("whisper")
 
-    assert bridge_start_command("127.0.0.1", 8765) == "local-ai-dictation bridge --host 127.0.0.1 --port 8765 --backend whisper"
+    assert (
+        bridge_start_command("127.0.0.1", 8765)
+        == "local-ai-dictation bridge --host 127.0.0.1 --port 8765 --backend whisper"
+    )

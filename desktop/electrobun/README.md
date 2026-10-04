@@ -91,9 +91,15 @@ uv run local-ai-dictation gui --help
 .venv/bin/local-ai-dictation gui-package-verify --json --timeout-seconds 240
 ```
 
-`bun run check` performs bundle-time verification of:
+`bun run check` runs Oxlint, Oxfmt's format check, Knip, and the Bun tests before
+bundle-time verification of:
+
 - `src/mainview/index.ts` for the browser target
 - `src/bun/index.ts` for the Bun target
+
+Run `bun run format` to format the desktop sources. Knip includes both application
+entrypoints, the Electrobun configuration, and the tests. `rcedit` remains a
+development dependency because the Python Windows installer calls its binary.
 
 `gui-package-verify` is the repo-supported unattended Windows packaging + E2E check.
 

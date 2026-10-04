@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
-from local_ai_dictation.audio import has_probable_speech, list_input_devices, resample_pcm16_mono, resolve_input_sample_rate
+from local_ai_dictation.audio import (
+    has_probable_speech,
+    list_input_devices,
+    resample_pcm16_mono,
+    resolve_input_sample_rate,
+)
 from local_ai_dictation.backend_state import get_backend
 from local_ai_dictation.dictation import (
     _load_model,
@@ -26,10 +31,13 @@ from local_ai_dictation.dictation import (
     save_audio,
 )
 from local_ai_dictation.doctor import collect_doctor_report
-from local_ai_dictation.errors import ExitCode, MODEL_TRANSCRIBE_FAILED, WILLOW_AUTH_REQUIRED, ModelError
+from local_ai_dictation.errors import (
+    MODEL_TRANSCRIBE_FAILED,
+    WILLOW_AUTH_REQUIRED,
+    ModelError,
+)
 from local_ai_dictation.output import copy_transcript_to_clipboard, render_transcription
 from local_ai_dictation.types import DictationConfig, TranscriptionResult
-
 
 BRIDGE_SCHEMA_VERSION = 1
 DEFAULT_E2E_TRANSCRIPT = "AI Dictation deterministic E2E transcript"
@@ -79,9 +87,19 @@ def _build_hyprland_paste_notifier(env: Mapping[str, str]) -> Callable[[], bool]
                 timeout=HYPRCTL_TIMEOUT_SECONDS,
                 check=False,
             )
-            window = json.loads(active_window.stdout) if active_window.returncode == 0 else {}
-            window_class = str(window.get("class") or "") if isinstance(window, dict) else ""
-            shortcut = "CTRL SHIFT,V,activewindow" if window_class == "com.mitchellh.ghostty" else "CTRL,V,activewindow"
+            window = (
+                json.loads(active_window.stdout)
+                if active_window.returncode == 0
+                else {}
+            )
+            window_class = (
+                str(window.get("class") or "") if isinstance(window, dict) else ""
+            )
+            shortcut = (
+                "CTRL SHIFT,V,activewindow"
+                if window_class == "com.mitchellh.ghostty"
+                else "CTRL,V,activewindow"
+            )
             dispatched = subprocess.run(
                 [hyprctl, "dispatch", "sendshortcut", shortcut],
                 stdout=subprocess.DEVNULL,
@@ -103,7 +121,9 @@ def _build_status_notifier(env: Mapping[str, str]) -> Callable[[], None] | None:
     if not raw_signal.isdigit():
         return None
 
-    process_name = str(env.get("LOCAL_AI_DICTATION_WAYBAR_PROCESS", "waybar")).strip() or "waybar"
+    process_name = (
+        str(env.get("LOCAL_AI_DICTATION_WAYBAR_PROCESS", "waybar")).strip() or "waybar"
+    )
 
     def _notify() -> None:
         def _signal_waybar() -> None:
@@ -169,10 +189,14 @@ class DictationBridgeController:
         paste_notifier: Callable[[], bool] | None = None,
         retain_audio: bool = False,
         diagnostic_audio_dir: Path | None = None,
-        runtime_loader: Callable[..., tuple[Any, Any, Any, Any]] = _load_runtime_dependencies,
+        runtime_loader: Callable[
+            ..., tuple[Any, Any, Any, Any]
+        ] = _load_runtime_dependencies,
         model_loader: Callable[..., tuple[Any, bool, float, float]] = _load_model,
         recorder: Callable[..., bytes | None] = record_audio_interruptible,
-        transcriber: Callable[..., tuple[TranscriptionResult, str, float, float]] = _transcribe_once,
+        transcriber: Callable[
+            ..., tuple[TranscriptionResult, str, float, float]
+        ] = _transcribe_once,
     ) -> None:
         self.backend = backend
         self.cpu = cpu
@@ -194,7 +218,9 @@ class DictationBridgeController:
         self._paste_notifier = paste_notifier
         self._retain_audio = retain_audio
         self._diagnostic_audio_dir = diagnostic_audio_dir or (
-            Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+            Path(
+                os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+            )
             / "local-ai-dictation"
             / "diagnostic-audio"
         )
@@ -291,10 +317,9 @@ class DictationBridgeController:
         if self._e2e_mode or self._runtime_ready.is_set():
             return
         self._append_diagnostic("Starting...")
-        try:
-            runtime_module, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.backend, self.debug)
-        except TypeError:
-            runtime_module, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.debug)
+        runtime_module, pyaudio_module, pyperclip_module, torch_module = (
+            self._runtime_loader(self.backend, self.debug)
+        )
         self._runtime_module = runtime_module
         self._pyaudio_module = pyaudio_module
         self._pyperclip_module = pyperclip_module
@@ -355,7 +380,9 @@ class DictationBridgeController:
             self._model_loading = True
             self._last_error = None
             self._last_error_code = None
-            self._warmup_thread = threading.Thread(target=self._warmup_worker, daemon=True)
+            self._warmup_thread = threading.Thread(
+                target=self._warmup_worker, daemon=True
+            )
             self._warmup_thread.start()
         self._notify_status()
 
@@ -380,7 +407,9 @@ class DictationBridgeController:
     def _complete_cancelled_before_recording(self) -> None:
         should_notify = False
         with self._lock:
-            if self._last_transcript and self._last_transcript.get("metadata", {}).get("cancelled_before_recording"):
+            if self._last_transcript and self._last_transcript.get("metadata", {}).get(
+                "cancelled_before_recording"
+            ):
                 self._state = "idle"
                 self._started_at = None
                 self._last_error = None
@@ -422,7 +451,9 @@ class DictationBridgeController:
 
     def _wait_for_e2e_delay(self, delay_ms: int) -> bool:
         if delay_ms <= 0:
-            return not (self._stop_requested.is_set() or self._shutdown_requested.is_set())
+            return not (
+                self._stop_requested.is_set() or self._shutdown_requested.is_set()
+            )
         deadline = time.monotonic() + (delay_ms / 1000.0)
         while time.monotonic() < deadline:
             if self._stop_requested.is_set() or self._shutdown_requested.is_set():
@@ -440,7 +471,9 @@ class DictationBridgeController:
             self._state = "recording"
         self._notify_status()
 
-        while not self._stop_requested.is_set() and not self._shutdown_requested.is_set():
+        while (
+            not self._stop_requested.is_set() and not self._shutdown_requested.is_set()
+        ):
             time.sleep(0.01)
 
         if self._shutdown_requested.is_set():
@@ -516,7 +549,9 @@ class DictationBridgeController:
                 capture_sample_rate = (
                     16000
                     if self.vad
-                    else resolve_input_sample_rate(self.input_device, self._pyaudio_module)
+                    else resolve_input_sample_rate(
+                        self.input_device, self._pyaudio_module
+                    )
                 )
                 on_audio_chunk = None
 
@@ -534,9 +569,15 @@ class DictationBridgeController:
                 config,
                 self._pyaudio_module,
                 sample_rate=capture_sample_rate,
-                stop_requested=lambda: self._stop_requested.is_set() or self._shutdown_requested.is_set(),
+                stop_requested=lambda: (
+                    self._stop_requested.is_set() or self._shutdown_requested.is_set()
+                ),
                 status_stream=self._diagnostic_stream,
-                **({"on_audio_chunk": on_audio_chunk} if on_audio_chunk is not None else {}),
+                **(
+                    {"on_audio_chunk": on_audio_chunk}
+                    if on_audio_chunk is not None
+                    else {}
+                ),
             )
 
             if self._shutdown_requested.is_set():
@@ -581,7 +622,11 @@ class DictationBridgeController:
                 streaming_attempt = 0
                 replay_captured_audio = False
                 willow_finalize = config.backend == "willow"
-                finalize_deadline = time.monotonic() + WILLOW_FINALIZE_DEADLINE_S if willow_finalize else None
+                finalize_deadline = (
+                    time.monotonic() + WILLOW_FINALIZE_DEADLINE_S
+                    if willow_finalize
+                    else None
+                )
                 if willow_finalize:
                     self._set_operation_deadline(finalize_deadline)
                     self._arm_finalize_watchdog(streaming_session, finalize_deadline)
@@ -593,7 +638,9 @@ class DictationBridgeController:
                             streaming_session.wait_ready()
                             if replay_captured_audio:
                                 streaming_session.send_audio(infer_audio_data)
-                            if has_probable_speech(infer_audio_data, 16000, vad_mode=config.vad_mode):
+                            if has_probable_speech(
+                                infer_audio_data, 16000, vad_mode=config.vad_mode
+                            ):
                                 self._append_diagnostic("🤖 Generating...")
                                 transcript_text = streaming_session.finish()
                                 streaming_session = None
@@ -602,7 +649,7 @@ class DictationBridgeController:
                                     device=(
                                         "cloud"
                                         if config.backend == "willow"
-                                        else getattr(self._model, "_parakeet_device", None)
+                                        else getattr(self._model, "_device", None)
                                     ),
                                     metadata={"backend": config.backend},
                                 )
@@ -612,16 +659,23 @@ class DictationBridgeController:
                                 streaming_session = None
                                 transcription = TranscriptionResult(
                                     text="",
-                                    metadata={"backend": config.backend, "silence_filtered": True},
+                                    metadata={
+                                        "backend": config.backend,
+                                        "silence_filtered": True,
+                                    },
                                 )
                             break
                         except ModelError as exc:
-                            if willow_finalize and self._finalize_expired(finalize_deadline):
+                            if willow_finalize and self._finalize_expired(
+                                finalize_deadline
+                            ):
                                 raise ModelError(
                                     MODEL_TRANSCRIBE_FAILED,
                                     "Willow connection failed before the text was ready. Record again, or switch the model.",
                                 ) from exc
-                            if not self._should_retry_streaming_error(config, exc, streaming_attempt):
+                            if not self._should_retry_streaming_error(
+                                config, exc, streaming_attempt
+                            ):
                                 raise
                             streaming_attempt += 1
                             self._append_diagnostic(
@@ -629,7 +683,9 @@ class DictationBridgeController:
                             )
                             streaming_session.cancel()
                             self._wait_for_streaming_session(streaming_session)
-                            if not self._sleep_until_retry(streaming_attempt, finalize_deadline):
+                            if not self._sleep_until_retry(
+                                streaming_attempt, finalize_deadline
+                            ):
                                 raise ModelError(
                                     MODEL_TRANSCRIBE_FAILED,
                                     "Willow connection failed before the text was ready. Record again, or switch the model.",
@@ -638,7 +694,9 @@ class DictationBridgeController:
                             with self._lock:
                                 self._active_streaming_session = streaming_session
                             if willow_finalize:
-                                self._arm_finalize_watchdog(streaming_session, finalize_deadline)
+                                self._arm_finalize_watchdog(
+                                    streaming_session, finalize_deadline
+                                )
                             replay_captured_audio = True
                             continue
                 finally:
@@ -680,6 +738,7 @@ class DictationBridgeController:
             if temp_path:
                 try:
                     import os
+
                     os.unlink(temp_path)
                 except Exception:
                     pass
@@ -718,7 +777,9 @@ class DictationBridgeController:
             )
 
     def _sleep_until_retry(self, attempt: int, deadline: float) -> bool:
-        delay = WILLOW_STREAMING_RETRY_DELAYS_S[min(attempt - 1, len(WILLOW_STREAMING_RETRY_DELAYS_S) - 1)]
+        delay = WILLOW_STREAMING_RETRY_DELAYS_S[
+            min(attempt - 1, len(WILLOW_STREAMING_RETRY_DELAYS_S) - 1)
+        ]
         end = min(time.monotonic() + delay, deadline)
         while time.monotonic() < end:
             if self._shutdown_requested.is_set():
@@ -770,7 +831,9 @@ class DictationBridgeController:
             if self._model_loading:
                 raise BridgeStateError("Model is still loading or warming")
             if self._session_thread is not None and self._session_thread.is_alive():
-                raise BridgeStateError("Cannot start while the previous session is still winding down")
+                raise BridgeStateError(
+                    "Cannot start while the previous session is still winding down"
+                )
             self._stop_requested.clear()
             self._session_finished.clear()
             self._state = "starting"
@@ -780,7 +843,9 @@ class DictationBridgeController:
             self._paste_dispatched_at = None
             self._last_error = None
             self._last_error_code = None
-            self._session_thread = threading.Thread(target=self._session_worker, daemon=True)
+            self._session_thread = threading.Thread(
+                target=self._session_worker, daemon=True
+            )
             self._session_thread.start()
             payload = self.get_session_payload()
         self._notify_status()
@@ -856,12 +921,17 @@ class DictationBridgeController:
         with self._lock:
             return self._health_payload_locked()
 
-    def wait_for_status_update(self, after_version: int | None, *, timeout: float = 15.0) -> tuple[int, dict[str, Any] | None]:
+    def wait_for_status_update(
+        self, after_version: int | None, *, timeout: float = 15.0
+    ) -> tuple[int, dict[str, Any] | None]:
         with self._lock:
             if after_version is None:
                 return self._event_version, self._health_payload_locked()
             updated = self._event_condition.wait_for(
-                lambda: self._event_version != after_version or self._shutdown_requested.is_set(),
+                lambda: (
+                    self._event_version != after_version
+                    or self._shutdown_requested.is_set()
+                ),
                 timeout=timeout,
             )
             if not updated or self._shutdown_requested.is_set():
@@ -989,7 +1059,9 @@ class _BridgeHandler(BaseHTTPRequestHandler):
             self._write_sse("session", payload)
 
         while True:
-            version, payload = self.controller.wait_for_status_update(version, timeout=15.0)
+            version, payload = self.controller.wait_for_status_update(
+                version, timeout=15.0
+            )
             if payload is None:
                 try:
                     self.wfile.write(b": keepalive\n\n")
@@ -1031,7 +1103,6 @@ def _env_int(name: str, env: Mapping[str, str], default: int) -> int:
     return int(value)
 
 
-
 def _parse_input_device(value: Any) -> int | str | None:
     if value is None:
         return None
@@ -1050,7 +1121,9 @@ def make_bridge_server(
     *,
     controller: DictationBridgeController,
 ) -> ThreadingHTTPServer:
-    handler = type("LocalAIDictationBridgeHandler", (_BridgeHandler,), {"controller": controller})
+    handler = type(
+        "LocalAIDictationBridgeHandler", (_BridgeHandler,), {"controller": controller}
+    )
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -1073,14 +1146,22 @@ def build_bridge_controller_from_namespace(
         log_file=str(getattr(namespace, "log_file", "transcriber.debug.log")),
         clipboard=bool(getattr(namespace, "clipboard", True)),
         e2e_mode=_env_truthy("LOCAL_AI_DICTATION_E2E_MODE", source_env),
-        e2e_transcript=source_env.get("LOCAL_AI_DICTATION_E2E_TRANSCRIPT", DEFAULT_E2E_TRANSCRIPT),
-        e2e_start_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_START_DELAY_MS", source_env, 0),
-        e2e_stop_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS", source_env, 0),
+        e2e_transcript=source_env.get(
+            "LOCAL_AI_DICTATION_E2E_TRANSCRIPT", DEFAULT_E2E_TRANSCRIPT
+        ),
+        e2e_start_delay_ms=_env_int(
+            "LOCAL_AI_DICTATION_E2E_START_DELAY_MS", source_env, 0
+        ),
+        e2e_stop_delay_ms=_env_int(
+            "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS", source_env, 0
+        ),
         status_notifier=_build_status_notifier(source_env),
         paste_notifier=_build_hyprland_paste_notifier(source_env),
         retain_audio=_env_truthy("LOCAL_AI_DICTATION_RETAIN_AUDIO", source_env),
         diagnostic_audio_dir=(
-            Path(source_env.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+            Path(
+                source_env.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+            )
             / "local-ai-dictation"
             / "diagnostic-audio"
         ),
@@ -1105,7 +1186,9 @@ def run_bridge_server(namespace: Any) -> int:
     signal.signal(signal.SIGINT, _request_shutdown)
     signal.signal(signal.SIGTERM, _request_shutdown)
 
-    print(f"AI Dictation bridge listening on http://{host}:{port} ({controller.backend})")
+    print(
+        f"AI Dictation bridge listening on http://{host}:{port} ({controller.backend})"
+    )
     print("Run the Windows app, then use its button or hotkey to start/stop recording.")
 
     try:

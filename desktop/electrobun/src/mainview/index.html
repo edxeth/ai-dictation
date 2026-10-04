@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -18,7 +18,9 @@
     <div id="confirmOverlay" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card">
         <div id="confirmTitle" class="modal-title">Clear history?</div>
-        <div id="confirmMessage" class="modal-message">Clear all transcription history for this bridge session?</div>
+        <div id="confirmMessage" class="modal-message">
+          Clear all transcription history for this bridge session?
+        </div>
         <div class="modal-actions">
           <button id="confirmCancelButton" class="secondary">Cancel</button>
           <button id="confirmOkButton" class="primary danger">Clear</button>
@@ -27,30 +29,15 @@
     </div>
 
     <div class="window-shell">
-      <header class="titlebar electrobun-webkit-app-region-drag">
-        <div class="titlebar-brand">
-          <img class="titlebar-icon" src="assets/local-ai-dictation-icon.png" alt="" />
-          <div class="titlebar-copy">
-            <div class="titlebar-eyebrow">Local AI</div>
-            <div class="titlebar-title">Dictation</div>
-          </div>
-        </div>
-        <div class="titlebar-actions electrobun-webkit-app-region-no-drag">
-          <button id="minimizeWindowButton" class="window-control secondary" aria-label="Minimize window" title="Minimize">
-            <span aria-hidden="true">—</span>
-          </button>
-          <button id="closeWindowButton" class="window-control secondary" aria-label="Close window" title="Close">
-            <span aria-hidden="true">✕</span>
-          </button>
-        </div>
-      </header>
-
       <div class="app" id="appShell">
         <header class="card hero hero-card">
           <div class="hero-copy">
             <div class="eyebrow">AI Dictation // Desk Relay</div>
             <h1>Transcript deck</h1>
-            <p class="sub">A polished desktop control surface for AI Dictation, tuned for quick capture, model switching, and clean review.</p>
+            <p class="sub">
+              A polished desktop control surface for AI Dictation, tuned for quick capture, model
+              switching, and clean review.
+            </p>
           </div>
           <div class="hero-status">
             <div class="label">Bridge state</div>
@@ -73,7 +60,7 @@
               <div id="modelValue" class="value">Whisper</div>
             </div>
             <div class="control-actions">
-              <button id="switchModelButton" class="secondary">Use Parakeet</button>
+              <button id="switchModelButton" class="secondary">Use Parakeet Ultra</button>
               <button id="toggleButton" class="primary">Start recording</button>
             </div>
           </div>
@@ -93,7 +80,10 @@
             <div class="history-empty">
               <div class="history-empty-kicker">Awaiting first pass</div>
               <div class="history-empty-title">No transcripts yet</div>
-              <div class="history-empty-copy">Start a recording and completed transcripts will land here for quick copy and review.</div>
+              <div class="history-empty-copy">
+                Start a recording and completed transcripts will land here for quick copy and
+                review.
+              </div>
             </div>
           </div>
           <button id="showMoreButton" class="secondary history-more hidden">Show 10 more</button>
@@ -113,7 +103,7 @@
           <pre id="bridgeCommand" class="command">—</pre>
         </details>
 
-        <details class="card collapsible-card debug-card" id="diagnosticsSection">
+        <details class="card collapsible-card" id="diagnosticsSection">
           <summary class="collapsible-summary">
             <div>
               <span class="label">Diagnostics</span>

@@ -4,22 +4,21 @@ import base64
 import hashlib
 import io
 import json
-from pathlib import Path
 import threading
 import time
+import wave
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
-import wave
 
-import msgpack
 import pytest
 from websockets.sync.server import serve
 
 import local_ai_dictation.cli as cli_module
+import local_ai_dictation.willow as willow_module
 from local_ai_dictation.cli import main
 from local_ai_dictation.errors import ModelError
 from local_ai_dictation.types import DictationConfig
-import local_ai_dictation.willow as willow_module
 from local_ai_dictation.willow import (
     WillowEngine,
     WillowProtocol,
@@ -47,7 +46,9 @@ def test_load_session_reads_willow_linux_supabase_storage(tmp_path: Path):
         "user": {"id": "user-123", "email": "person@example.com"},
     }
     path = tmp_path / "supabase-session.json"
-    path.write_text(json.dumps({"sb-db-auth-token": json.dumps(session)}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"sb-db-auth-token": json.dumps(session)}), encoding="utf-8"
+    )
 
     loaded = load_session(path=path, env={})
 
@@ -103,7 +104,9 @@ def test_legacy_session_is_migrated_to_minimal_owned_file(tmp_path: Path):
     assert owned.stat().st_mode & 0o777 == 0o600
 
 
-def test_willow_session_import_cli_writes_private_minimal_file(tmp_path: Path, monkeypatch, capsys):
+def test_willow_session_import_cli_writes_private_minimal_file(
+    tmp_path: Path, monkeypatch, capsys
+):
     state_home = tmp_path / "state"
     source = tmp_path / "official-session.json"
     source.write_text(
@@ -165,12 +168,14 @@ def test_willow_session_login_cli_completes_google_pkce_and_writes_private_sessi
         return Response()
 
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
-    monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+    monkeypatch.setattr(
+        willow_module.webbrowser, "open", lambda url: opened_urls.append(url) or True
+    )
     monkeypatch.setattr(willow_module, "urlopen", fake_urlopen)
     # Plain input() so the pasted callback URL echoes in plaintext.
     monkeypatch.setattr(
         "builtins.input",
-        lambda prompt: "https://willowvoice.com/success-open-app?code=oauth-code",
+        lambda _prompt: "https://willowvoice.com/success-open-app?code=oauth-code",
     )
     monkeypatch.setattr(cli_module, "_find_bridge_pids", lambda host, port: [123])
     monkeypatch.setattr(
@@ -185,17 +190,25 @@ def test_willow_session_login_cli_completes_google_pkce_and_writes_private_sessi
     authorize_url = opened_urls[0]
     assert authorize_url.startswith("https://db.willowvoice.com/auth/v1/authorize?")
     assert "provider=google" in authorize_url
-    assert "redirect_to=https%3A%2F%2Fwillowvoice.com%2Fsuccess-open-app" in authorize_url
+    assert (
+        "redirect_to=https%3A%2F%2Fwillowvoice.com%2Fsuccess-open-app" in authorize_url
+    )
     authorize_query = parse_qs(urlparse(authorize_url).query)
     assert authorize_query["code_challenge_method"] == ["s256"]
     assert len(requests) == 1
     request, timeout = requests[0]
     request_body = json.loads(request.data.decode("utf-8"))
-    expected_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(request_body["code_verifier"].encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    expected_challenge = (
+        base64.urlsafe_b64encode(
+            hashlib.sha256(request_body["code_verifier"].encode("ascii")).digest()
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
     assert authorize_query["code_challenge"] == [expected_challenge]
-    assert request.full_url == "https://db.willowvoice.com/auth/v1/token?grant_type=pkce"
+    assert (
+        request.full_url == "https://db.willowvoice.com/auth/v1/token?grant_type=pkce"
+    )
     assert request_body["auth_code"] == "oauth-code"
     assert request_body["code_verifier"]
     assert timeout == 8.0
@@ -240,12 +253,14 @@ def test_google_oauth_exchange_converts_expires_in_to_absolute_expiry(monkeypatc
     assert session.expires_at == 4_600.0
 
 
-def test_willow_session_login_rejects_callback_from_another_host(tmp_path: Path, monkeypatch):
+def test_willow_session_login_rejects_callback_from_another_host(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(willow_module.webbrowser, "open", lambda url: True)
     monkeypatch.setattr(
         "builtins.input",
-        lambda prompt: "https://attacker.example/success-open-app?code=stolen-code",
+        lambda _prompt: "https://attacker.example/success-open-app?code=stolen-code",
     )
     monkeypatch.setattr(
         willow_module,
@@ -256,11 +271,15 @@ def test_willow_session_login_rejects_callback_from_another_host(tmp_path: Path,
     with pytest.raises(Exception, match="success URL from willowvoice.com"):
         main(["willow-session", "login"])
 
-    assert not (tmp_path / "state" / "local-ai-dictation" / "willow-session.json").exists()
+    assert not (
+        tmp_path / "state" / "local-ai-dictation" / "willow-session.json"
+    ).exists()
 
 
 def test_load_session_accepts_explicit_environment_token():
-    loaded = load_session(env={"WILLOW_ACCESS_TOKEN": "environment-token", "WILLOW_USER_ID": "env-user"})
+    loaded = load_session(
+        env={"WILLOW_ACCESS_TOKEN": "environment-token", "WILLOW_USER_ID": "env-user"}
+    )
 
     assert loaded.access_token == "environment-token"
     assert loaded.user_id == "env-user"
@@ -307,7 +326,9 @@ def test_rejected_refresh_token_is_reported_as_auth_required(monkeypatch):
     monkeypatch.setattr(willow_module, "urlopen", refused)
 
     with pytest.raises(ModelError) as excinfo:
-        willow_module._refresh_session(WillowSession("old-token", "user-123", "old-refresh", 1.0))
+        willow_module._refresh_session(
+            WillowSession("old-token", "user-123", "old-refresh", 1.0)
+        )
 
     assert excinfo.value.code == "WILLOW_AUTH_REQUIRED"
     assert "willow-session login" in excinfo.value.message
@@ -316,12 +337,16 @@ def test_rejected_refresh_token_is_reported_as_auth_required(monkeypatch):
 
 def test_refresh_server_error_stays_a_transparent_refresh_failure(monkeypatch):
     def unavailable(request, timeout):
-        raise HTTPError(request.full_url, 503, "Service Unavailable", None, io.BytesIO(b""))
+        raise HTTPError(
+            request.full_url, 503, "Service Unavailable", None, io.BytesIO(b"")
+        )
 
     monkeypatch.setattr(willow_module, "urlopen", unavailable)
 
     with pytest.raises(ModelError) as excinfo:
-        willow_module._refresh_session(WillowSession("old-token", "user-123", "old-refresh", 1.0))
+        willow_module._refresh_session(
+            WillowSession("old-token", "user-123", "old-refresh", 1.0)
+        )
 
     assert excinfo.value.code == "MODEL_IMPORT_FAILED"
     assert "Could not refresh Willow login" in excinfo.value.message
@@ -343,7 +368,9 @@ def test_expired_session_is_refreshed_and_persisted(tmp_path: Path, monkeypatch)
         "user": {"id": "user-123"},
     }
     path = tmp_path / "supabase-session.json"
-    path.write_text(json.dumps({"sb-db-auth-token": json.dumps(stored)}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"sb-db-auth-token": json.dumps(stored)}), encoding="utf-8"
+    )
     monkeypatch.setattr(
         willow_module,
         "_refresh_session",
@@ -364,7 +391,9 @@ def test_expired_session_is_refreshed_and_persisted(tmp_path: Path, monkeypatch)
 
     engine._ensure_fresh_session()
 
-    persisted = json.loads(next(iter(json.loads(path.read_text(encoding="utf-8")).values())))
+    persisted = json.loads(
+        next(iter(json.loads(path.read_text(encoding="utf-8")).values()))
+    )
     assert persisted["access_token"] == "fresh-token"
     assert persisted["refresh_token"] == "fresh-refresh-token"
     assert persisted["expires_at"] == 4_000_000_000
@@ -375,7 +404,10 @@ def test_willow_protocol_reassembles_chunked_result():
     protocol = WillowProtocol(maximum_message_bytes=256)
     wires = protocol.encode(
         "dictation_result",
-        {"actions": [{"type": "paste", "text": "Mock transcript"}], "padding": "x" * 500},
+        {
+            "actions": [{"type": "paste", "text": "Mock transcript"}],
+            "padding": "x" * 500,
+        },
     )
 
     received = None
@@ -413,10 +445,14 @@ def test_streaming_session_waits_for_health_handshake():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.socket.getsockname()[1]
-        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+        engine = WillowEngine(
+            access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe"
+        )
         session = engine.start_streaming()
         ready = threading.Event()
-        waiter = threading.Thread(target=lambda: (session.wait_ready(), ready.set()), daemon=True)
+        waiter = threading.Thread(
+            target=lambda: (session.wait_ready(), ready.set()), daemon=True
+        )
         waiter.start()
 
         assert health_received.wait(timeout=2)
@@ -433,7 +469,9 @@ def test_streaming_session_waits_for_health_handshake():
 def test_streaming_session_cancel_unblocks_readiness_during_connect(monkeypatch):
     open_started = threading.Event()
     release_open = threading.Event()
-    engine = WillowEngine(access_token="test-token", connect_timeout=5.0, result_timeout=1.0)
+    engine = WillowEngine(
+        access_token="test-token", connect_timeout=5.0, result_timeout=1.0
+    )
 
     def blocked_open():
         open_started.set()
@@ -469,7 +507,9 @@ def test_streaming_session_cancel_unblocks_readiness_during_connect(monkeypatch)
 def test_streaming_session_finish_unblocks_when_full_queue_is_cancelled(monkeypatch):
     open_started = threading.Event()
     release_open = threading.Event()
-    engine = WillowEngine(access_token="test-token", connect_timeout=1.0, result_timeout=1.0)
+    engine = WillowEngine(
+        access_token="test-token", connect_timeout=1.0, result_timeout=1.0
+    )
 
     def blocked_open():
         open_started.set()
@@ -573,7 +613,9 @@ def test_streaming_session_sends_audio_before_flush():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.socket.getsockname()[1]
-        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+        engine = WillowEngine(
+            access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe"
+        )
 
         session = engine.start_streaming()
         session.wait_ready()
@@ -629,7 +671,11 @@ def test_streaming_session_buffers_audio_sent_before_handshake_ready(repo_fixtur
                 socket.send(
                     outgoing.encode(
                         "dictation_result",
-                        {"actions": [{"type": "paste", "text": "Buffered start transcript"}]},
+                        {
+                            "actions": [
+                                {"type": "paste", "text": "Buffered start transcript"}
+                            ]
+                        },
                     )[0]
                 )
                 return
@@ -638,7 +684,9 @@ def test_streaming_session_buffers_audio_sent_before_handshake_ready(repo_fixtur
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.socket.getsockname()[1]
-        engine = WillowEngine(access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe")
+        engine = WillowEngine(
+            access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe"
+        )
 
         session = engine.start_streaming()
         assert health_received.wait(timeout=2)
@@ -656,11 +704,15 @@ def test_streaming_session_buffers_audio_sent_before_handshake_ready(repo_fixtur
     assert b"".join(received_audio) == pcm
 
 
-def test_streaming_session_send_audio_is_silent_after_self_terminated_session(monkeypatch):
+def test_streaming_session_send_audio_is_silent_after_self_terminated_session(
+    monkeypatch,
+):
     # If the Willow handshake fails while capture is still feeding the session,
     # send_audio must drop audio quietly instead of raising out of the recorder.
     release_open = threading.Event()
-    engine = WillowEngine(access_token="test-token", connect_timeout=1.0, result_timeout=1.0)
+    engine = WillowEngine(
+        access_token="test-token", connect_timeout=1.0, result_timeout=1.0
+    )
 
     def failing_open():
         release_open.wait(timeout=2)
@@ -710,7 +762,12 @@ def test_transcribe_wav_sends_willow_handshake_and_recording(tmp_path: Path):
                 for wire in reversed(
                     outgoing.encode(
                         "dictation_result",
-                        {"actions": [{"type": "paste", "text": "Recorded speech transcript"}], "padding": "x" * 500},
+                        {
+                            "actions": [
+                                {"type": "paste", "text": "Recorded speech transcript"}
+                            ],
+                            "padding": "x" * 500,
+                        },
                     )
                 ):
                     socket.send(wire)
@@ -753,7 +810,11 @@ def test_transcribe_wav_sends_willow_handshake_and_recording(tmp_path: Path):
         "audio_packet",
         "flush_packet",
     ]
-    audio = b"".join(envelope["d"]["data"] for envelope in received if envelope["d"]["key"] == "audio_packet")
+    audio = b"".join(
+        envelope["d"]["data"]
+        for envelope in received
+        if envelope["d"]["key"] == "audio_packet"
+    )
     assert audio == pcm
 
 
@@ -764,14 +825,20 @@ def test_check_model_cache_rejects_expired_unrefreshable_session(tmp_path: Path)
         json.dumps(
             {
                 "sb-db-auth-token": json.dumps(
-                    {"access_token": "expired-token", "expires_at": 1, "user": {"id": "user-123"}}
+                    {
+                        "access_token": "expired-token",
+                        "expires_at": 1,
+                        "user": {"id": "user-123"},
+                    }
                 )
             }
         ),
         encoding="utf-8",
     )
 
-    status = willow_module.check_model_cache(env={"XDG_STATE_HOME": str(tmp_path / "state")})
+    status = willow_module.check_model_cache(
+        env={"XDG_STATE_HOME": str(tmp_path / "state")}
+    )
 
     assert status["import_ready"] is False
     assert "refresh token" in status["import_error"]

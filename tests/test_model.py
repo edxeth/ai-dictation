@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import importlib
+import io
+import threading
+import wave
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from local_ai_dictation import model as model_module
+from local_ai_dictation.errors import (
+    MODEL_IMPORT_FAILED,
+    MODEL_TRANSCRIBE_FAILED,
+    ModelError,
+)
 from local_ai_dictation.model import MODEL_ID, check_model_cache, warmup
-
+from local_ai_dictation.types import DictationConfig
 
 
 def test_parakeet_warmup_runs_real_inference_and_removes_fixture():
     paths: list[Path] = []
 
     class Engine:
-        def eval(self):
-            return self
-
-        def transcribe(self, audio, *, verbose=False):
+        def transcribe(self, audio):
             path = Path(audio[0])
             assert path.is_file()
             paths.append(path)
@@ -32,14 +42,17 @@ def test_check_model_cache_detects_local_snapshot(tmp_path, monkeypatch):
         / ".cache"
         / "huggingface"
         / "hub"
-        / "models--nvidia--parakeet-tdt-0.6b-v3"
+        / "models--moondream--parakeet-ultra"
         / "snapshots"
         / "abc123"
     )
     snapshot_dir.mkdir(parents=True)
-    (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
+    for name in ("config.json", "tokenizer.json", "model.safetensors"):
+        (snapshot_dir / name).write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr("local_ai_dictation.model._check_import_readiness", lambda: (True, None))
+    monkeypatch.setattr(
+        "local_ai_dictation.model._check_import_readiness", lambda: (True, None)
+    )
 
     status = check_model_cache(home=home)
 
@@ -54,10 +67,14 @@ def test_check_model_cache_detects_local_snapshot(tmp_path, monkeypatch):
     }
 
 
-
-def test_check_model_cache_reports_missing_cache_and_import_failure(tmp_path, monkeypatch):
+def test_check_model_cache_reports_missing_cache_and_import_failure(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
-    monkeypatch.setattr("local_ai_dictation.model._check_import_readiness", lambda: (False, "nemo import failed"))
+    monkeypatch.setattr(
+        "local_ai_dictation.model._check_import_readiness",
+        lambda: (False, "kestrel import failed"),
+    )
 
     status = check_model_cache(home=home)
 
@@ -67,6 +84,240 @@ def test_check_model_cache_reports_missing_cache_and_import_failure(tmp_path, mo
         "cache_path": None,
         "model_id": MODEL_ID,
         "import_ready": False,
-        "import_error": "nemo import failed",
+        "import_error": "kestrel import failed",
         "detail": "Local cache is missing and model imports failed",
     }
+
+
+def test_ultra_load_uses_direct_runtime_and_cached_checkpoint(monkeypatch):
+    configurations = []
+    runtime = SimpleNamespace(forward=lambda task, inputs: [{"text": "Hello, world!"}])
+
+    def build_runtime(config):
+        configurations.append(config)
+        return runtime
+
+    monkeypatch.setattr(
+        model_module,
+        "_load_runtime_dependencies",
+        lambda: (
+            build_runtime,
+            SimpleNamespace,
+            SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(model_module, "_resolve_model_path", lambda: "/cached/ultra")
+
+    engine = model_module.load_engine(DictationConfig(backend="parakeet", cpu=True))
+
+    assert MODEL_ID == "moondream/parakeet-ultra"
+    assert vars(configurations[0]) == {
+        "model": "moondream/parakeet-ultra",
+        "model_path": "/cached/ultra",
+        "device": "cpu",
+    }
+    assert model_module.transcribe_wav(engine, "speech.wav").text == "Hello, world!"
+    assert engine._device == "cpu"
+
+
+def test_incomplete_ultra_cache_is_not_ready(tmp_path, monkeypatch):
+    snapshot = (
+        tmp_path
+        / ".cache/huggingface/hub/models--moondream--parakeet-ultra/snapshots/revision"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(model_module, "_check_import_readiness", lambda: (True, None))
+
+    assert check_model_cache(home=tmp_path)["cache_present"] is False
+
+
+def test_ultra_runtime_load_errors_keep_the_model_error_contract(monkeypatch):
+    def fail(config):
+        raise RuntimeError("weights cannot be loaded")
+
+    monkeypatch.setattr(
+        model_module,
+        "_load_runtime_dependencies",
+        lambda: (fail, SimpleNamespace, object()),
+    )
+    monkeypatch.setattr(model_module, "_resolve_model_path", lambda: "/cached/ultra")
+
+    with pytest.raises(ModelError, match="weights cannot be loaded") as error:
+        model_module.load_engine(DictationConfig(backend="parakeet", cpu=True))
+    assert error.value.code == MODEL_IMPORT_FAILED
+
+
+def test_ultra_runtime_result_errors_keep_the_transcription_error_contract():
+    runtime = SimpleNamespace(forward=lambda task, inputs: [ValueError("invalid WAV")])
+    engine = model_module.ParakeetUltraEngine(runtime, device="cpu")
+
+    with pytest.raises(ModelError, match="invalid WAV") as error:
+        model_module.transcribe_wav(engine, "broken.wav")
+    assert error.value.code == MODEL_TRANSCRIBE_FAILED
+
+
+def test_runtime_dependencies_use_the_exported_model_not_the_telemetry_wrapper(
+    monkeypatch,
+):
+    runtime_class = object()
+    config_class = object()
+    torch_module = object()
+    allowed_modules = {
+        "kestrel.models.parakeet_tdt": SimpleNamespace(
+            ParakeetTdtRuntime=runtime_class
+        ),
+        "kestrel.config": SimpleNamespace(RuntimeConfig=config_class),
+        "torch": torch_module,
+    }
+    monkeypatch.setattr(
+        model_module.importlib, "import_module", allowed_modules.__getitem__
+    )
+
+    assert model_module._load_runtime_dependencies() == (
+        runtime_class,
+        config_class,
+        torch_module,
+    )
+
+
+@pytest.mark.parametrize(
+    "cached_files",
+    [(), ("config.json",), ("config.json", "tokenizer.json", "model.safetensors")],
+)
+def test_checkpoint_resolution_downloads_only_when_cache_is_missing_or_partial(
+    tmp_path, monkeypatch, cached_files
+):
+    import huggingface_hub
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    calls = []
+    for name in cached_files:
+        (tmp_path / name).write_text("cached", encoding="utf-8")
+
+    def download(model_id, *, allow_patterns, local_files_only=False):
+        calls.append(local_files_only)
+        assert model_id == "moondream/parakeet-ultra"
+        assert allow_patterns == ["config.json", "tokenizer.json", "model.safetensors"]
+        if local_files_only and not cached_files:
+            raise LocalEntryNotFoundError("no local snapshot")
+        return str(tmp_path)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", download)
+
+    assert model_module._resolve_model_path() == str(tmp_path)
+    assert calls == ([True] if len(cached_files) == 3 else [True, False])
+
+
+def test_direct_runtime_serializes_calls_and_preserves_each_transcript():
+    entered = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
+    second_entered_runtime = threading.Event()
+    transcripts = []
+
+    def forward(task, inputs):
+        assert task == "transcribe"
+        path = inputs[0]["audio"]
+        if path == "warmup.wav":
+            entered.set()
+            assert release.wait(timeout=3)
+        else:
+            second_entered_runtime.set()
+        return [{"text": path}]
+
+    engine = model_module.ParakeetUltraEngine(
+        SimpleNamespace(forward=forward), device="cuda"
+    )
+
+    def transcribe(path):
+        if path == "recording.wav":
+            second_started.set()
+        transcripts.append(engine.transcribe([path])[0].text)
+
+    first = threading.Thread(target=transcribe, args=("warmup.wav",))
+    second = threading.Thread(target=transcribe, args=("recording.wav",))
+    first.start()
+    try:
+        assert entered.wait(timeout=3)
+        second.start()
+        assert second_started.wait(timeout=3)
+        assert not second_entered_runtime.wait(timeout=0.05)
+    finally:
+        release.set()
+        first.join(timeout=3)
+        if second.ident is not None:
+            second.join(timeout=3)
+
+    assert sorted(transcripts) == ["recording.wav", "warmup.wav"]
+
+
+def test_direct_runtime_receives_file_paths_and_is_closed():
+    calls = []
+    runtime = SimpleNamespace(
+        forward=lambda task, inputs: (
+            calls.append((task, inputs)) or [{"text": "First."}, {"text": "Second."}]
+        ),
+        shutdown=lambda: calls.append("shutdown"),
+    )
+    engine = model_module.ParakeetUltraEngine(runtime, device="cpu")
+
+    results = engine.transcribe([Path("first.wav"), "second.wav"])
+    engine.close()
+
+    assert [item.text for item in results] == ["First.", "Second."]
+    assert all(item.device == "cpu" for item in results)
+    assert calls == [
+        ("transcribe", [{"audio": "first.wav"}, {"audio": "second.wav"}]),
+        "shutdown",
+    ]
+
+
+def test_dictation_and_bridge_batch_path_load_and_transcribe_with_the_ultra_adapter(
+    monkeypatch,
+):
+    dictation = importlib.import_module("local_ai_dictation.dictation")
+    configurations = []
+    observed_audio = []
+
+    def forward(task, inputs):
+        assert task == "transcribe"
+        path = Path(inputs[0]["audio"])
+        with wave.open(str(path)) as audio:
+            observed_audio.append(
+                (audio.getframerate(), audio.getnchannels(), audio.getsampwidth())
+            )
+        return [{"text": "A complete sentence."}]
+
+    def build_runtime(config):
+        configurations.append(config)
+        return SimpleNamespace(forward=forward)
+
+    monkeypatch.setattr(
+        model_module,
+        "_load_runtime_dependencies",
+        lambda: (build_runtime, SimpleNamespace, object()),
+    )
+    monkeypatch.setattr(model_module, "_resolve_model_path", lambda: "/cached/ultra")
+    monkeypatch.setattr(dictation, "spinner_animation", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dictation, "has_probable_speech", lambda *args, **kwargs: True)
+    config = DictationConfig(backend="parakeet", cpu=True, debug=True)
+    engine, use_cuda, _, _ = dictation._load_model(
+        config, model_module, object(), status_stream=io.StringIO()
+    )
+
+    result, path, _, _ = dictation._transcribe_once(
+        config,
+        engine,
+        b"\x00\x00" * 160,
+        16000,
+        status_stream=io.StringIO(),
+    )
+    try:
+        assert result.text == "A complete sentence."
+        assert result.metadata == {"backend": "parakeet"}
+        assert use_cuda is False
+        assert configurations[0].model == "moondream/parakeet-ultra"
+        assert observed_audio == [(16000, 1, 2)]
+    finally:
+        Path(path).unlink()

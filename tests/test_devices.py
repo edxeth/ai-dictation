@@ -8,7 +8,9 @@ from local_ai_dictation.types import AudioDevice
 
 
 class _FakePyAudioInstance:
-    def __init__(self, devices: list[dict], host_apis: dict[int, str], default_index: int | None):
+    def __init__(
+        self, devices: list[dict], host_apis: dict[int, str], default_index: int | None
+    ):
         self._devices = devices
         self._host_apis = host_apis
         self._default_index = default_index
@@ -33,7 +35,9 @@ class _FakePyAudioInstance:
 
 
 class _FakePyAudioModule:
-    def __init__(self, devices: list[dict], host_apis: dict[int, str], default_index: int | None):
+    def __init__(
+        self, devices: list[dict], host_apis: dict[int, str], default_index: int | None
+    ):
         self._instance = _FakePyAudioInstance(devices, host_apis, default_index)
 
     def PyAudio(self) -> _FakePyAudioInstance:

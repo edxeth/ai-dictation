@@ -1,10 +1,8 @@
 :root {
   color-scheme: dark;
   --bg: #090705;
-  --bg-elevated: #120d09;
   --panel: rgba(24, 18, 13, 0.92);
   --panel-strong: rgba(31, 23, 17, 0.98);
-  --panel-soft: rgba(45, 33, 23, 0.72);
   --line: rgba(208, 167, 99, 0.18);
   --line-strong: rgba(225, 188, 118, 0.34);
   --text: #f4ead8;
@@ -88,7 +86,9 @@ select {
   background:
     radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0 0.9px, transparent 1px 100%),
     radial-gradient(circle at top, rgba(255, 241, 220, 0.06), transparent 62%);
-  background-size: 9px 9px, auto;
+  background-size:
+    9px 9px,
+    auto;
   mix-blend-mode: soft-light;
   opacity: 0.12;
 }
@@ -166,8 +166,7 @@ select {
   border: 1px solid var(--line-strong);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 18%),
-    linear-gradient(135deg, rgba(255, 122, 77, 0.06), transparent 48%),
-    var(--panel-strong);
+    linear-gradient(135deg, rgba(255, 122, 77, 0.06), transparent 48%), var(--panel-strong);
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
@@ -213,58 +212,6 @@ h1 {
   margin-top: 6px;
 }
 
-.titlebar {
-  display: none;
-}
-
-.titlebar-brand,
-.titlebar-copy,
-.titlebar-actions {
-  display: flex;
-  align-items: center;
-}
-
-.titlebar-brand {
-  gap: 12px;
-  min-width: 0;
-}
-
-.titlebar-copy {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.titlebar-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
-.titlebar-eyebrow {
-  color: var(--accent-strong);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-
-.titlebar-title {
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.titlebar-actions {
-  gap: 8px;
-}
-
 .card {
   position: relative;
   flex: 0 0 auto;
@@ -274,8 +221,7 @@ h1 {
   padding: 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 18%),
-    linear-gradient(135deg, rgba(255, 122, 77, 0.05), transparent 44%),
-    var(--panel);
+    linear-gradient(135deg, rgba(255, 122, 77, 0.05), transparent 44%), var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -307,10 +253,6 @@ h1 {
 
 .spread {
   justify-content: space-between;
-}
-
-.middle {
-  align-items: center;
 }
 
 .hero-card {
@@ -449,7 +391,6 @@ h1 {
   justify-content: flex-end;
 }
 
-
 .value,
 .status-line,
 .meta,
@@ -547,27 +488,6 @@ button:disabled {
   box-shadow: none;
 }
 
-.window-control {
-  width: 38px;
-  height: 38px;
-  min-height: 38px;
-  padding: 0;
-  border-radius: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.window-control:last-child:hover:not(:disabled) {
-  color: #fff7ef;
-  border-color: rgba(255, 122, 77, 0.5);
-  background: rgba(255, 122, 77, 0.16);
-}
-
 #toggleButton {
   flex: 0 0 auto;
   min-width: 176px;
@@ -631,8 +551,7 @@ button:disabled {
   border-radius: 18px;
   border: 1px solid rgba(214, 168, 98, 0.14);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent 16%),
-    rgba(9, 7, 5, 0.6);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent 16%), rgba(9, 7, 5, 0.6);
 }
 
 .history-empty {
@@ -714,7 +633,9 @@ button:disabled {
   width: 17px;
   height: 17px;
   display: block;
-  transition: transform 180ms ease, opacity 180ms ease;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
 }
 
 .history-copy:hover:not(:disabled) svg {
@@ -865,11 +786,6 @@ button:disabled {
     gap: 10px;
   }
 
-  .titlebar {
-    min-height: 52px;
-    padding: 8px 10px 8px 12px;
-  }
-
   .app {
     gap: 14px;
     padding-right: 8px;
@@ -917,10 +833,14 @@ button:disabled {
 @keyframes badgePulse {
   0%,
   100% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 0 rgba(255, 122, 77, 0);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 0 0 rgba(255, 122, 77, 0);
   }
 
   50% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 24px rgba(255, 122, 77, 0.22);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 0 24px rgba(255, 122, 77, 0.22);
   }
 }

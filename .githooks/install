@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+current=$(git config --get core.hooksPath || :)
+if [ -n "$current" ] && [ "$current" != '.githooks' ]; then
+  printf 'Refusing to replace existing core.hooksPath: %s\n' "$current" >&2
+  exit 1
+fi
+
+if [ -z "$current" ]; then
+  hooks=$(git rev-parse --git-path hooks)
+  for hook in "$hooks"/*; do
+    case "$hook" in *.sample) continue ;; esac
+    if [ -f "$hook" ] && [ -x "$hook" ]; then
+      printf 'Refusing to disable existing Git hook: %s\n' "$hook" >&2
+      exit 1
+    fi
+  done
+fi
+
+chmod +x "$root/.githooks/pre-commit"
+git config --local core.hooksPath .githooks
+printf '%s\n' 'Installed pre-commit hook: staged content must pass make check.'

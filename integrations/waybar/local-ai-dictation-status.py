@@ -10,7 +10,9 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 BRIDGE_URL = os.environ.get("LOCAL_AI_DICTATION_BRIDGE_URL", "http://127.0.0.1:8765")
-STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+STATE_HOME = Path(
+    os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+)
 STATE_DIR = STATE_HOME / "local-ai-dictation-waybar"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 LAST_STATE_PATH = STATE_DIR / "last-state"
@@ -33,7 +35,7 @@ def preferred_backend() -> str:
 def backend_label(value: str) -> str:
     return {
         "whisper": "Whisper",
-        "parakeet": "Parakeet",
+        "parakeet": "Parakeet Ultra",
         "willow": "Willow",
     }.get(value, "Whisper")
 
@@ -74,13 +76,22 @@ def play_cue(path: Path) -> None:
         executable = command[0]
         if not executable:
             continue
-        subprocess.Popen([executable, *command[1:]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            [executable, *command[1:]],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return
 
 
 def active_window_class() -> str:
     try:
-        completed = subprocess.run(["hyprctl", "-j", "activewindow"], capture_output=True, text=True, check=False)
+        completed = subprocess.run(
+            ["hyprctl", "-j", "activewindow"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if completed.returncode != 0 or not completed.stdout.strip():
             return ""
         payload = json.loads(completed.stdout)
@@ -95,7 +106,12 @@ def send_paste_shortcut() -> None:
     shortcut = "CTRL,V,activewindow"
     if active_window_class() == "com.mitchellh.ghostty":
         shortcut = "CTRL SHIFT,V,activewindow"
-    subprocess.run(["hyprctl", "dispatch", "sendshortcut", shortcut], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(
+        ["hyprctl", "dispatch", "sendshortcut", shortcut],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
@@ -103,15 +119,28 @@ def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
     preferred_text = backend_label(preferred)
     module_text = f"󰍬 {preferred_text}"
     if not payload:
-        return ("offline", module_text, f"{preferred_text} offline", f"Bridge offline\nPreferred model: {preferred_text}")
+        return (
+            "offline",
+            module_text,
+            f"{preferred_text} offline",
+            f"Bridge offline\nPreferred model: {preferred_text}",
+        )
 
     bridge = payload.get("bridge")
     session = payload.get("session")
     if not isinstance(bridge, dict) or not isinstance(session, dict):
         return ("error", module_text, "AI Dictation error", "Unexpected bridge payload")
 
-    running_backend = str((session.get("config") or {}).get("backend") if isinstance(session.get("config"), dict) else preferred)
-    running_backend = running_backend if running_backend in {"whisper", "parakeet", "willow"} else preferred
+    running_backend = str(
+        (session.get("config") or {}).get("backend")
+        if isinstance(session.get("config"), dict)
+        else preferred
+    )
+    running_backend = (
+        running_backend
+        if running_backend in {"whisper", "parakeet", "willow"}
+        else preferred
+    )
     running_text = backend_label(running_backend)
     module_text = f"󰍬 {running_text}"
     state = str(session.get("state") or "idle")
@@ -123,14 +152,38 @@ def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
         transcript = str(last_transcript.get("transcript") or "").strip() or None
 
     if state == "recording":
-        return (state, module_text, f"{running_text} recording", f"Recording with {running_text}…\nLeft click to stop\nRight click to switch model")
+        return (
+            state,
+            module_text,
+            f"{running_text} recording",
+            f"Recording with {running_text}…\nLeft click to stop\nRight click to switch model",
+        )
     if state == "starting" or bool(session.get("model_loading")):
-        message = "Loading model and preparing to record…" if not model_loaded else "Preparing to record…"
-        return ("starting", module_text, f"{running_text} starting", f"{message}\nLeft click: start/stop\nRight click: switch model")
+        message = (
+            "Loading model and preparing to record…"
+            if not model_loaded
+            else "Preparing to record…"
+        )
+        return (
+            "starting",
+            module_text,
+            f"{running_text} starting",
+            f"{message}\nLeft click: start/stop\nRight click: switch model",
+        )
     if state == "transcribing":
-        return (state, module_text, f"{running_text} transcribing", f"Transcribing with {running_text}…")
+        return (
+            state,
+            module_text,
+            f"{running_text} transcribing",
+            f"Transcribing with {running_text}…",
+        )
     if state == "error":
-        return (state, module_text, f"{running_text} error", str(last_error or "Bridge error"))
+        return (
+            state,
+            module_text,
+            f"{running_text} error",
+            str(last_error or "Bridge error"),
+        )
     if model_loaded:
         tooltip = f"{running_text} ready\nLeft click: record\nRight click: switch model"
         if transcript:
@@ -143,7 +196,12 @@ def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
             f"{preferred_text} ready",
             "Ready. First recording will connect to Willow Voice cloud.\nLeft click: record\nRight click: switch model",
         )
-    return ("idle", module_text, f"{preferred_text} ready", f"Ready. First recording will load {preferred_text}.\nLeft click: record\nRight click: switch model")
+    return (
+        "idle",
+        module_text,
+        f"{preferred_text} ready",
+        f"Ready. First recording will load {preferred_text}.\nLeft click: record\nRight click: switch model",
+    )
 
 
 try:
@@ -170,15 +228,26 @@ if isinstance(payload, dict):
             transcript_text = str(last_transcript.get("transcript") or "").strip()
 
 if previous_state != state:
-    if state in {"starting", "recording"} and previous_state not in {"starting", "recording"}:
+    if state in {"starting", "recording"} and previous_state not in {
+        "starting",
+        "recording",
+    }:
         play_cue(START_CUE)
-    elif state == "idle" and previous_state in {"starting", "recording", "transcribing"}:
+    elif state == "idle" and previous_state in {
+        "starting",
+        "recording",
+        "transcribing",
+    }:
         play_cue(COMPLETE_CUE)
     write_last_state(state)
 
 if completed_at is not None and completed_at != previous_completed_at:
     write_last_completed_at(completed_at)
-    if previous_completed_at is not None and transcript_text and paste_dispatched_at is None:
+    if (
+        previous_completed_at is not None
+        and transcript_text
+        and paste_dispatched_at is None
+    ):
         send_paste_shortcut()
 
 print(json.dumps({"text": icon, "alt": text, "tooltip": tooltip, "class": state}))

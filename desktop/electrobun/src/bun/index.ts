@@ -1,11 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
-
-import { FFIType, dlopen } from "bun:ffi";
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
 import { native, toCString } from "../../node_modules/electrobun/dist/api/bun/proc/native";
-import { backendToggleCommand, bridgeEndpoint } from "./backend-command";
+import { backendToggleCommand, bridgeEndpoint, readPreferredBackend } from "./backend-command";
 
 type SessionPayload = {
   schema_version: number;
@@ -46,6 +43,8 @@ type RendererReadyPayload = {
 };
 
 type RendererAutomationSnapshot = {
+  modelValueText: string;
+  switchModelButtonText: string;
   statusBadgeText: string;
   statusBadgeClassName: string;
   statusLine: string;
@@ -61,8 +60,6 @@ type RendererAutomationSnapshot = {
 };
 
 type RendererAutomationActionId = "toggle-recording";
-
-type SessionCueKind = "start" | "complete";
 
 type StartupDiagnostics = {
   bridgeUrl: string;
@@ -130,9 +127,6 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       toggleBackend: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
-      showWindow: { params: {}; response: { success: true } };
-      minimizeWindow: { params: {}; response: { success: true } };
-      closeWindow: { params: {}; response: { success: true } };
       reportRendererReady: { params: RendererReadyPayload; response: { success: true } };
     };
     messages: {};
@@ -140,19 +134,22 @@ type DesktopRPC = {
   webview: RPCSchema<{
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
-      runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
-      playSessionCue: { params: { kind: SessionCueKind }; response: { success: true } };
+      runAutomationAction: {
+        params: { action: RendererAutomationActionId };
+        response: RendererAutomationSnapshot;
+      };
     };
     messages: {};
   }>;
 };
 
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8765";
-const DEFAULT_BACKEND: BackendName = "whisper";
 const BRIDGE_URL = Bun.env.LOCAL_AI_DICTATION_BRIDGE_URL || DEFAULT_BRIDGE_URL;
 const BRIDGE_COMMAND_OVERRIDE = Bun.env.LOCAL_AI_DICTATION_BRIDGE_COMMAND || "";
-const IS_LINUX_WAYLAND = process.platform === "linux"
-  && ((Bun.env.XDG_SESSION_TYPE || "").toLowerCase() === "wayland" || Boolean(Bun.env.WAYLAND_DISPLAY));
+const IS_LINUX_WAYLAND =
+  process.platform === "linux" &&
+  ((Bun.env.XDG_SESSION_TYPE || "").toLowerCase() === "wayland" ||
+    Boolean(Bun.env.WAYLAND_DISPLAY));
 const DEFAULT_HOTKEY = process.platform === "linux" ? "Control+Alt+R" : "CommandOrControl+Alt+R";
 
 function normalizeHotkey(accelerator: string): string {
@@ -164,7 +161,10 @@ function normalizeHotkey(accelerator: string): string {
       if (normalized === "ctrl") {
         return "Control";
       }
-      if (process.platform === "linux" && (normalized === "commandorcontrol" || normalized === "cmdorctrl")) {
+      if (
+        process.platform === "linux" &&
+        (normalized === "commandorcontrol" || normalized === "cmdorctrl")
+      ) {
         return "Control";
       }
       return trimmed;
@@ -183,11 +183,13 @@ const DEFAULT_STARTUP_LOG_DIR = Bun.env.LOCALAPPDATA
     : Bun.env.HOME
       ? join(Bun.env.HOME, ".local", "state", "local-ai-dictation", "desktop")
       : "";
-const GUI_LOG_PATH = Bun.env.LOCAL_AI_DICTATION_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup.log") : "");
-const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.LOCAL_AI_DICTATION_GUI_STARTUP_DIAGNOSTICS_PATH
-  || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
+const GUI_LOG_PATH =
+  Bun.env.LOCAL_AI_DICTATION_GUI_LOG_PATH ||
+  (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup.log") : "");
+const GUI_STARTUP_DIAGNOSTICS_PATH =
+  Bun.env.LOCAL_AI_DICTATION_GUI_STARTUP_DIAGNOSTICS_PATH ||
+  (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
 const GUI_AUTO_EXIT_MS = Number(Bun.env.LOCAL_AI_DICTATION_GUI_AUTO_EXIT_MS || "0") || 0;
-const APP_STARTED_AT = Date.now() / 1000;
 const APP_ICON_URL = "views://mainview/assets/local-ai-dictation-icon.png";
 const BACKEND_STATE_PATH = Bun.env.XDG_STATE_HOME
   ? join(Bun.env.XDG_STATE_HOME, "local-ai-dictation", "backend.json")
@@ -196,47 +198,8 @@ const BACKEND_STATE_PATH = Bun.env.XDG_STATE_HOME
     : "/tmp/local-ai-dictation-backend.json";
 const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
 
-const SND_ASYNC = 0x0001;
-const SND_NODEFAULT = 0x0002;
-const SND_FILENAME = 0x00020000;
-
-const nativeSoundPlayer = process.platform === "win32"
-  ? dlopen("winmm.dll", {
-      PlaySoundA: {
-        args: [FFIType.cstring, FFIType.ptr, FFIType.u32],
-        returns: FFIType.bool,
-      },
-    })
-  : null;
-const nativeCuePlayerCommands = [
-  [Bun.which("paplay"), []],
-  [Bun.which("pw-play"), []],
-  [Bun.which("ffplay"), ["-v", "quiet", "-nodisp", "-autoexit"]],
-] as const;
-
 function normalizeBackend(value: string | null | undefined): BackendName {
   return value === "parakeet" || value === "willow" ? value : "whisper";
-}
-
-function readPreferredBackend(): BackendName {
-  try {
-    const payload = JSON.parse(Bun.file(BACKEND_STATE_PATH).textSync());
-    return normalizeBackend(typeof payload?.backend === "string" ? payload.backend : undefined);
-  } catch {
-    return DEFAULT_BACKEND;
-  }
-}
-
-function writePreferredBackend(backend: BackendName): BackendName {
-  mkdirSync(dirname(BACKEND_STATE_PATH), { recursive: true });
-  writeFileSync(BACKEND_STATE_PATH, `${JSON.stringify({ backend })}\n`);
-  return backend;
-}
-
-function togglePreferredBackend(): BackendName {
-  const order: BackendName[] = ["whisper", "parakeet", "willow"];
-  const currentIndex = order.indexOf(readPreferredBackend());
-  return writePreferredBackend(order[(currentIndex + 1) % order.length]);
 }
 
 function localCliPath(): string {
@@ -264,11 +227,13 @@ function toggleBackendAndRestartBridge(): BackendName {
     },
   });
   if (result.exitCode !== 0) {
-    const error = Buffer.from(result.stderr).toString("utf8").trim() || `backend toggle failed with exit code ${result.exitCode}`;
+    const error =
+      Buffer.from(result.stderr).toString("utf8").trim() ||
+      `backend toggle failed with exit code ${result.exitCode}`;
     throw new Error(error);
   }
   const text = Buffer.from(result.stdout).toString("utf8").trim();
-  return normalizeBackend(text || readPreferredBackend());
+  return normalizeBackend(text || readPreferredBackend(BACKEND_STATE_PATH));
 }
 
 function buildBridgeStartCommand(backend: BackendName): string {
@@ -282,20 +247,6 @@ function buildBridgeStartCommand(backend: BackendName): string {
     // keep defaults
   }
   return `local-ai-dictation bridge --host ${host} --port ${port} --backend ${backend}`;
-}
-
-function resolveSessionCueAssetPath(kind: SessionCueKind): string | null {
-  const filename = kind === "start" ? "session-start.wav" : "session-complete.wav";
-  const candidates = [
-    join(import.meta.dir, "..", "mainview", "assets", filename),
-    join(import.meta.dir, "..", "views", "mainview", "assets", filename),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
 }
 const emptySession = (): SessionPayload => ({
   schema_version: 1,
@@ -377,7 +328,7 @@ async function fetchBridgeJson(path: string, init?: RequestInit): Promise<any> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers || {}),
+      ...init?.headers,
     },
   });
 
@@ -389,14 +340,16 @@ async function fetchBridgeJson(path: string, init?: RequestInit): Promise<any> {
   }
 
   if (!response.ok) {
-    throw new Error(payload?.detail || payload?.error || `Bridge request failed: ${response.status}`);
+    throw new Error(
+      payload?.detail || payload?.error || `Bridge request failed: ${response.status}`,
+    );
   }
 
   return payload;
 }
 
 async function readBridgeState(): Promise<BridgeViewState> {
-  const preferredBackend = readPreferredBackend();
+  const preferredBackend = readPreferredBackend(BACKEND_STATE_PATH);
   const bridgeStartCommand = BRIDGE_COMMAND_OVERRIDE || buildBridgeStartCommand(preferredBackend);
   try {
     const health = await fetchBridgeJson("/health");
@@ -427,89 +380,6 @@ async function readBridgeState(): Promise<BridgeViewState> {
 }
 
 const HOTKEY_COOLDOWN_MS = 450;
-
-let lastObservedSessionState: SessionPayload["state"] | "offline" = "offline";
-let lastPlayedStartCueAt: number | null = null;
-let lastPlayedCompleteCueAt: number | null = null;
-
-function playNativeSessionCue(kind: SessionCueKind): boolean {
-  const assetPath = resolveSessionCueAssetPath(kind);
-  if (!assetPath) {
-    appendGuiLog("WARN", `Session cue asset missing for ${kind}`);
-    return false;
-  }
-
-  if (process.platform === "win32" && nativeSoundPlayer) {
-    try {
-      const started = nativeSoundPlayer.symbols.PlaySoundA(toCString(assetPath), null, SND_ASYNC | SND_NODEFAULT | SND_FILENAME);
-      if (!started) {
-        appendGuiLog("WARN", `Native PlaySound failed for ${kind}`);
-        return false;
-      }
-      appendGuiLog("INFO", `Playing ${kind} cue natively with PlaySound`);
-      return true;
-    } catch (error) {
-      appendGuiLog("WARN", `Failed to play ${kind} cue natively: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
-    }
-  }
-
-  for (const [command, args] of nativeCuePlayerCommands) {
-    if (!command) {
-      continue;
-    }
-    try {
-      const child = spawn(command, [...args, assetPath], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      appendGuiLog("INFO", `Playing ${kind} cue via ${command}`);
-      return true;
-    } catch (error) {
-      appendGuiLog("WARN", `Failed to play ${kind} cue via ${command}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  return false;
-}
-
-async function requestRendererSessionCue(kind: "start" | "complete") {
-  if (startupDiagnostics.rendererRpcReady && mainWindow?.webview.rpc) {
-    try {
-      await mainWindow.webview.rpc.request.playSessionCue({ kind });
-      return;
-    } catch (error) {
-      appendGuiLog("WARN", `Failed to play ${kind} cue in renderer: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  playNativeSessionCue(kind);
-}
-
-function applyObservedBridgeState(state: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
-  const nextSessionState = state.connected ? state.session.state : "offline";
-  const nextStartCueAt = state.connected
-    ? (typeof state.session.recording_started_at === "number" ? state.session.recording_started_at : state.session.started_at)
-    : null;
-  const nextCompleteCueAt = state.connected
-    ? (typeof state.session.clipboard_copied_at === "number" ? state.session.clipboard_copied_at : state.session.last_completed_at)
-    : null;
-
-  if (allowCue) {
-    if (nextSessionState === "recording" && nextStartCueAt !== null && nextStartCueAt >= APP_STARTED_AT && nextStartCueAt !== lastPlayedStartCueAt) {
-      lastPlayedStartCueAt = nextStartCueAt;
-      void requestRendererSessionCue("start");
-    }
-
-    if (nextCompleteCueAt !== null && nextCompleteCueAt >= APP_STARTED_AT && nextCompleteCueAt !== lastPlayedCompleteCueAt) {
-      lastPlayedCompleteCueAt = nextCompleteCueAt;
-      void requestRendererSessionCue("complete");
-    }
-  }
-
-  lastObservedSessionState = nextSessionState;
-}
 
 async function refreshBridgeStateCache() {
   return await readBridgeState();
@@ -548,12 +418,17 @@ async function readRendererAutomationSnapshot(): Promise<RendererAutomationSnaps
   try {
     return await mainWindow.webview.rpc.request.getAutomationSnapshot({});
   } catch (error) {
-    appendGuiLog("WARN", `Failed to read renderer automation snapshot: ${error instanceof Error ? error.message : String(error)}`);
+    appendGuiLog(
+      "WARN",
+      `Failed to read renderer automation snapshot: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
 
-async function runRendererAutomationAction(action: RendererAutomationActionId): Promise<RendererAutomationSnapshot> {
+async function runRendererAutomationAction(
+  action: RendererAutomationActionId,
+): Promise<RendererAutomationSnapshot> {
   if (!startupDiagnostics.rendererRpcReady || !mainWindow?.webview.rpc) {
     throw new Error("Renderer automation is not ready yet");
   }
@@ -675,18 +550,6 @@ mainWindow = new BrowserWindow({
           await fetchBridgeJson("/session/clear-history", { method: "POST", body: "{}" });
           return await refreshBridgeStateCache();
         },
-        showWindow: async () => {
-          showMainWindow();
-          return { success: true } as const;
-        },
-        minimizeWindow: async () => {
-          mainWindow?.minimize();
-          return { success: true } as const;
-        },
-        closeWindow: async () => {
-          triggerQuit("window-control:close");
-          return { success: true } as const;
-        },
         reportRendererReady: async ({ userAgent }) => {
           updateStartupDiagnostics({
             rendererReady: true,
@@ -727,7 +590,10 @@ async function toggleFromBackground(source: "hotkey" | "tray" | "automation" = "
     await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
     await refreshBridgeStateCache();
   } catch (error) {
-    appendGuiLog("ERROR", `Background toggle failed: ${error instanceof Error ? error.message : String(error)}`);
+    appendGuiLog(
+      "ERROR",
+      `Background toggle failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   } finally {
     sessionToggleInFlight = false;
   }
@@ -749,7 +615,10 @@ function applyWindowsWindowIcon() {
   try {
     native.symbols.setWindowIcon(mainWindow.ptr, toCString(APP_WINDOW_ICON_PATH));
   } catch (error) {
-    appendGuiLog("WARN", `Failed to set window icon: ${error instanceof Error ? error.message : String(error)}`);
+    appendGuiLog(
+      "WARN",
+      `Failed to set window icon: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -854,11 +723,17 @@ function startAutomationServer() {
           if (request.method === "POST" && url.pathname.startsWith("/actions/")) {
             const action = decodeURIComponent(url.pathname.slice("/actions/".length));
             if (!isAutomationAction(action)) {
-              return jsonResponse({ ok: false, error: `Unknown automation action: ${action}` }, 404);
+              return jsonResponse(
+                { ok: false, error: `Unknown automation action: ${action}` },
+                404,
+              );
             }
             return jsonResponse({ ok: true, state: await runAutomationAction(action) });
           }
-          return jsonResponse({ ok: false, error: `Unknown automation route: ${url.pathname}` }, 404);
+          return jsonResponse(
+            { ok: false, error: `Unknown automation route: ${url.pathname}` },
+            404,
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           updateStartupDiagnostics({ lastError: message });

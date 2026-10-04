@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import os
 import re
-
+from collections.abc import Iterable
 
 _NVIDIA_MODULE_LINE = re.compile(r"^nvidia(?:_[^\s]+)?\s")
 

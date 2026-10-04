@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import threading
 import time
-
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOGGLE_SCRIPT = ROOT / "integrations" / "hyprland" / "local-ai-dictation-toggle.sh"
@@ -41,7 +40,9 @@ class _FailedToggleHandler(BaseHTTPRequestHandler):
 
 class _AuthFailureHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler interface
-        body = json.dumps({"ok": True, "bridge": {"model_loading": False}}).encode("utf-8")
+        body = json.dumps({"ok": True, "bridge": {"model_loading": False}}).encode(
+            "utf-8"
+        )
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -246,7 +247,7 @@ def test_hyprland_toggle_connection_failure_uses_plain_notification(tmp_path: Pa
     stub_bin.mkdir()
     notify_stub = stub_bin / "notify-send"
     notify_stub.write_text(
-        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$STUB_LOG/notify-send.args\"\n",
+        '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$STUB_LOG/notify-send.args"\n',
         encoding="utf-8",
     )
     notify_stub.chmod(0o755)
@@ -302,7 +303,8 @@ def test_hyprland_toggle_auth_failure_notification_copies_login_command(tmp_path
                 'echo >> "$STUB_LOG/notify-send.args"',
                 "echo copy",
             ]
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     notify_stub.chmod(0o755)
@@ -313,7 +315,8 @@ def test_hyprland_toggle_auth_failure_notification_copies_login_command(tmp_path
                 "#!/bin/bash",
                 'cat > "$STUB_LOG/clipboard"',
             ]
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     wl_copy_stub.chmod(0o755)
@@ -353,10 +356,16 @@ def test_hyprland_toggle_auth_failure_notification_copies_login_command(tmp_path
     deadline = time.time() + 2.0
     while time.time() < deadline and not clipboard.exists():
         time.sleep(0.05)
-    assert clipboard.read_text(encoding="utf-8") == "local-ai-dictation willow-session login"
+    assert (
+        clipboard.read_text(encoding="utf-8")
+        == "local-ai-dictation willow-session login"
+    )
 
     notify_args = (tmp_path / "notify-send.args").read_text(encoding="utf-8")
     assert "--action" in notify_args
     assert "copy=Copy sign-in command" in notify_args
     assert "Willow session expired" in notify_args
-    assert "Sign in again. Click to copy: local-ai-dictation willow-session login" in notify_args
+    assert (
+        "Sign in again. Click to copy: local-ai-dictation willow-session login"
+        in notify_args
+    )

@@ -7,7 +7,6 @@ from local_ai_dictation.doctor import collect_doctor_report, doctor_exit_code
 from local_ai_dictation.model import MODEL_ID
 from local_ai_dictation.types import AudioDevice
 
-
 _DEFAULT_WSL = {
     "is_wsl": False,
     "has_wslg_socket": False,
@@ -16,7 +15,9 @@ _DEFAULT_WSL = {
 
 
 def _stub_common(monkeypatch):
-    monkeypatch.setattr("local_ai_dictation.doctor._detect_wsl", lambda: dict(_DEFAULT_WSL))
+    monkeypatch.setattr(
+        "local_ai_dictation.doctor._detect_wsl", lambda: dict(_DEFAULT_WSL)
+    )
     monkeypatch.setattr("local_ai_dictation.doctor.get_backend", lambda: "parakeet")
 
 
@@ -24,7 +25,11 @@ def _stub_ready_runtime(monkeypatch):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.probe_audio_backend",
-        lambda: {"status": "reachable", "transport": "tcp", "detail": "pactl info succeeded"},
+        lambda: {
+            "status": "reachable",
+            "transport": "tcp",
+            "detail": "pactl info succeeded",
+        },
     )
     monkeypatch.setattr(
         "local_ai_dictation.doctor.list_input_devices",
@@ -45,9 +50,12 @@ def _stub_ready_runtime(monkeypatch):
     )
     monkeypatch.setattr(
         "local_ai_dictation.doctor._collect_cuda_status",
-        lambda: {"available": True, "selected_device": "cuda", "device_name": "NVIDIA Test GPU"},
+        lambda: {
+            "available": True,
+            "selected_device": "cuda",
+            "device_name": "NVIDIA Test GPU",
+        },
     )
-
 
 
 def test_collect_doctor_report_ok_when_audio_and_runtime_are_ready(monkeypatch):
@@ -68,14 +76,15 @@ def test_collect_doctor_report_ok_when_audio_and_runtime_are_ready(monkeypatch):
     assert doctor_exit_code(report) == 0
 
 
-
 def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
     _stub_ready_runtime(monkeypatch)
 
     def _unexpected_model_check():
         raise AssertionError("default doctor mode should not check the model cache")
 
-    monkeypatch.setattr("local_ai_dictation.doctor.check_model_cache", _unexpected_model_check)
+    monkeypatch.setattr(
+        "local_ai_dictation.doctor.check_model_cache", _unexpected_model_check
+    )
 
     report = collect_doctor_report()
 
@@ -86,7 +95,6 @@ def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
         "backend": "parakeet",
     }
     assert report.status["overall"] == "ok"
-
 
 
 def test_collect_doctor_report_targets_willow_backend(monkeypatch):
@@ -102,7 +110,9 @@ def test_collect_doctor_report_targets_willow_backend(monkeypatch):
     }
 
 
-def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_exist(monkeypatch):
+def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_exist(
+    monkeypatch,
+):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.probe_audio_backend",
@@ -119,7 +129,11 @@ def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_ex
     )
     monkeypatch.setattr(
         "local_ai_dictation.doctor._collect_cuda_status",
-        lambda: {"available": True, "selected_device": "cuda", "device_name": "NVIDIA Test GPU"},
+        lambda: {
+            "available": True,
+            "selected_device": "cuda",
+            "device_name": "NVIDIA Test GPU",
+        },
     )
 
     report = collect_doctor_report()
@@ -131,12 +145,17 @@ def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_ex
     assert doctor_exit_code(report) == 2
 
 
-
-def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_recording(monkeypatch):
+def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_recording(
+    monkeypatch,
+):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.probe_audio_backend",
-        lambda: {"status": "reachable", "transport": "tcp", "detail": "pactl info succeeded"},
+        lambda: {
+            "status": "reachable",
+            "transport": "tcp",
+            "detail": "pactl info succeeded",
+        },
     )
     monkeypatch.setattr(
         "local_ai_dictation.doctor.list_input_devices",
@@ -173,7 +192,6 @@ def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_rec
     assert doctor_exit_code(report) == 3
 
 
-
 def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
@@ -206,8 +224,9 @@ def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
     assert report.status["issues"] == []
 
 
-
-def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_import_failures(monkeypatch):
+def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_import_failures(
+    monkeypatch,
+):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
@@ -217,7 +236,7 @@ def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_impo
             "cache_path": None,
             "model_id": MODEL_ID,
             "import_ready": False,
-            "import_error": "nemo import failed",
+            "import_error": "kestrel import failed",
             "detail": "Local cache is missing and model imports failed",
         },
     )
@@ -228,7 +247,6 @@ def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_impo
     assert report.status["overall"] == "fail"
     assert report.status["exit_code"] == 2
     assert issue_codes == {"MODEL_CACHE_MISSING", "MODEL_IMPORT_FAILED"}
-
 
 
 def test_doctor_command_emits_json_schema(monkeypatch, capsys):
@@ -265,7 +283,6 @@ def test_doctor_command_emits_json_schema(monkeypatch, capsys):
         "exit_code": 0,
         "issues": [],
     }
-
 
 
 def test_doctor_command_emits_model_check_json(monkeypatch, capsys):

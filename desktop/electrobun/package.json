@@ -1,19 +1,25 @@
 {
   "name": "local-ai-dictation-electrobun",
-  "private": true,
   "version": "0.0.1",
+  "private": true,
   "type": "module",
   "scripts": {
     "start": "electrobun dev",
     "dev": "electrobun dev --watch",
     "test": "bun test",
-    "check": "bun test && bun build src/mainview/index.ts --target=browser --outdir .tmp-check/renderer && bun build src/bun/index.ts --target=bun --outdir .tmp-check/bun"
+    "format": "oxfmt --write .",
+    "lint": "oxlint --deny-warnings src electrobun.config.ts && oxfmt --check .",
+    "deadcode": "knip --no-progress",
+    "check": "bun run lint && bun run deadcode && bun test && bun build src/mainview/index.ts --target=browser --outdir .tmp-check/renderer && bun build src/bun/index.ts --target=bun --outdir .tmp-check/bun"
   },
   "dependencies": {
     "electrobun": "^1.15.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "knip": "6.39.0",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
     "rcedit": "^4.0.1",
     "typescript": "^5.9.3"
   }

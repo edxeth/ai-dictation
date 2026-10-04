@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  BRIDGE_STATE_REFRESH_INTERVAL_MS,
-  startBridgeStateRefresh,
-} from "./bridge-state-refresh";
+import { BRIDGE_STATE_REFRESH_INTERVAL_MS, startBridgeStateRefresh } from "./bridge-state-refresh";
 
 describe("bridge state refresh", () => {
   test("periodically refreshes state when SSE updates are unavailable", () => {

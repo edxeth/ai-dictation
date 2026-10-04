@@ -13,15 +13,12 @@ def test_normalize_transcript_applies_nfkc_casefold_punctuation_and_whitespace_r
     assert normalize_transcript("  Ｈｅｌｌｏ，\nWORLD!!  ") == "hello world"
 
 
-
 def test_normalized_exact_match_ignores_case_and_punctuation_only_differences():
     assert normalized_exact_match("Hello, world!!!", "hello world") is True
 
 
-
 def test_normalized_exact_match_rejects_lexical_differences():
     assert normalized_exact_match("hello there", "hello world") is False
-
 
 
 def test_expected_sidecar_loader_discovers_and_normalizes_expected_text(tmp_path):

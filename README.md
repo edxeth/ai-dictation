@@ -2,7 +2,7 @@
 
 AI voice dictation with local and cloud transcription for Linux, plus a desktop GUI and system integrations:
 
-- local **Whisper** and **Parakeet** speech-to-text backends
+- local **Whisper** and **Parakeet Ultra** speech-to-text backends
 - the **Willow Voice** cloud backend
 - a persistent localhost bridge
 - a native Electrobun control GUI
@@ -44,19 +44,22 @@ local-ai-dictation benchmark --backend willow --fixture recording.wav --runs 1 -
 ### Whisper
 
 - Factory default
-- Lower local VRAM pressure than Parakeet
+- Local GPU or CPU inference
 - Model: `deepdml/faster-distil-whisper-large-v3.5`
 - The persistent bridge performs a real inference warmup, then overlaps long
   recordings with timestamped rolling windows so stop only finalizes the tail
 
-### Parakeet
+### Parakeet Ultra
 
-- Local NVIDIA NeMo inference
-- Higher model-load VRAM spike
-- Model: `nvidia/parakeet-tdt-0.6b-v3`
-- The persistent bridge performs a real inference warmup; this offline
-  checkpoint stays on batch inference because cache-aware streaming needs
-  multi-second context
+- Model: `moondream/parakeet-ultra`, with CUDA acceleration and CPU fallback
+- Uses the direct Parakeet Ultra runtime from `kestrel==0.9.1`, not the Photon client
+  or inference-engine wrapper. Those wrappers send machine and usage telemetry;
+  this integration does not create them.
+- Downloads weights from Hugging Face on first use. A complete cached model
+  loads without network access. No Moondream account or API key is required.
+- The persistent bridge performs a real inference warmup. Transcription remains
+  batch-based and starts after recording stops; live streaming is not enabled.
+- The `parakeet` backend key, desktop controls, and hotkeys are unchanged.
 
 ### Willow Voice cloud
 
@@ -162,7 +165,7 @@ uv venv --python 3.12
 source .venv/bin/activate
 
 # Install the appropriate PyTorch build for your hardware.
-uv pip install torch torchaudio torchvision \
+uv pip install torch \
   --index-url https://download.pytorch.org/whl/cu130
 
 uv pip install -e '.[test]'
@@ -250,7 +253,7 @@ The GUI displays the running backend, bridge command, session state,
 transcription history, errors, and a model switch control that cycles:
 
 ```text
-Whisper → Parakeet → Willow → Whisper
+Whisper → Parakeet Ultra → Willow → Whisper
 ```
 
 Switching backend restarts the bridge so local model VRAM is released. The GUI
@@ -268,33 +271,6 @@ update-desktop-database ~/.local/share/applications
 If `local-ai-dictation` is not available in the graphical session's `PATH`,
 replace the desktop entry's `Exec` and `TryExec` values with the absolute path
 to `~/.local/bin/local-ai-dictation`.
-
-The current application name is **AI Dictation**. Old launcher entries
-named **Parakeet Dictation** or `parakeet-desktop` are obsolete build artifacts,
-not a separate application. Remove stale desktop entries and restart the
-launcher provider, for example:
-
-```bash
-systemctl --user restart elephant.service
-```
-
-If the obsolete name survives only in Elephant's launch history, reset that
-single provider cache with a backup first:
-
-```bash
-history="$HOME/.cache/elephant/desktopapplications_history.gob"
-backup_dir="$HOME/.local/state/local-ai-dictation"
-backup="$backup_dir/desktopapplications_history.gob.backup"
-install -d -m 0700 "$backup_dir"
-systemctl --user stop elephant.service
-if [ -f "$history" ]; then
-  cp -a "$history" "$backup" && rm -f "$history"
-fi
-systemctl --user start elephant.service
-```
-
-This resets application ranking/history in Walker but does not remove desktop
-entries or application data. Restore the backup if needed.
 
 ## Arch Linux + Hyprland + Waybar
 
@@ -394,7 +370,7 @@ Behavior:
 
 - Left click or `Super+R`: start/stop recording.
 - Right click: persist the next backend and restart the bridge.
-- Display: `󰍬 Whisper`, `󰍬 Parakeet`, or `󰍬 Willow`.
+- Display: `󰍬 Whisper`, `󰍬 Parakeet Ultra`, or `󰍬 Willow`.
 - Successful completion: copy the transcript, then ask Hyprland to paste into
   the focused application directly from the bridge; Waybar remains the fallback.
 - Ghostty uses `Ctrl+Shift+V`; other applications use `Ctrl+V`.
@@ -405,7 +381,7 @@ The switch order is deterministic, and the selected backend remains active
 after logout or reboot:
 
 ```text
-Whisper → Parakeet → Willow → Whisper
+Whisper → Parakeet Ultra → Willow → Whisper
 ```
 
 ## Omarchy and other Hyprland distributions
@@ -465,8 +441,11 @@ and transport security.
 
 ## Operational notes
 
-- Whisper is generally safer than Parakeet on a 6 GB GPU.
-- Parakeet has a larger transient model-load VRAM spike.
+- Parakeet Ultra uses GPU memory for weights and inference buffers. Leave
+  headroom for other applications, especially on a 6 GB GPU.
+- Kestrel is pinned because this integration uses its exported lower-level
+  Parakeet Ultra runtime. Before an upgrade, repeat GPU/CPU inference and a cached,
+  network-traced run to verify that the direct path still avoids telemetry.
 - Willow uses cloud processing and does not consume local model VRAM.
 - Switching backend restarts the bridge and releases the previous local model.
 - The Willow session refreshes without the official Willow application being
@@ -481,13 +460,37 @@ and transport security.
 
 ## Verification
 
-Run the complete local checks:
+Install the development tools into the existing Python environment and install
+the locked desktop dependencies:
 
 ```bash
-python -m compileall src tests
-.venv/bin/python -m pytest -q
-cd desktop/electrobun && bun run check
+uv pip install -e '.[test]' --group dev
+(cd desktop/electrobun && bun install --frozen-lockfile)
+make install-hooks
+make check
 ```
+
+`make check` runs Ruff lint and format checks, Vulture, deptry, the complete
+Python test suite, and the desktop Oxlint, Oxfmt, Knip, test, and build checks.
+Run `make format` to format the Python and desktop sources.
+
+The versioned `.githooks/pre-commit` hook blocks a commit if `make check` fails.
+It checks the exact staged tree in a temporary directory, not unstaged or
+untracked source files. It reuses the installed `.venv` and desktop
+`node_modules`, with Python imports directed to the staged source. It does not
+stash, auto-format, or stage your working files. Missing dependencies block the
+commit rather than skipping checks.
+
+Run `make install-hooks` once per clone. It sets the repository-local
+`core.hooksPath` and refuses to replace an existing hook setup. Include the
+Makefile, hook files, and check configuration in the first commit of this setup.
+Git can still bypass local hooks with `--no-verify`; server-side required checks
+are needed to prevent deliberate bypasses.
+
+Vulture's whitelist records HTTP callbacks and serialized fields that are used
+indirectly. deptry records runtime packages loaded through `importlib`. Knip
+keeps `rcedit` because the Python Windows installer executes its bundled binary.
+Review new findings against real callers before adding an exception.
 
 Useful runtime checks:
 

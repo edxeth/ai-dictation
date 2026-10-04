@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from argparse import Namespace
 import os
+from argparse import Namespace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 

@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
-from dataclasses import asdict
 import io
 import json
 import math
 import os
-from pathlib import Path
 import statistics
 import sys
 import time
+import unicodedata
 import wave
+from contextlib import redirect_stdout
+from dataclasses import asdict
+from pathlib import Path
 
-from local_ai_dictation.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
+from local_ai_dictation.errors import MODEL_TRANSCRIBE_FAILED, AppError, ExitCode
 from local_ai_dictation.model import load_engine, transcribe_wav
 from local_ai_dictation.types import BenchmarkReport, DictationConfig, ModelBackend
-import unicodedata
 
 
 class _RedirectStdoutToStderr:
@@ -60,7 +60,9 @@ class _RedirectStdoutToStderr:
 def normalize_transcript(text: str) -> str:
     """Normalize transcript text using the milestone-1 exact-match contract."""
     normalized = unicodedata.normalize("NFKC", text).lower()
-    alnum_or_space = "".join(character if character.isalnum() else " " for character in normalized)
+    alnum_or_space = "".join(
+        character if character.isalnum() else " " for character in normalized
+    )
     return " ".join(alnum_or_space.split())
 
 
@@ -78,7 +80,9 @@ def load_expected_transcript(
     sidecar_path = expected_sidecar_path(fixture_path)
     if not sidecar_path.is_file():
         if required:
-            raise FileNotFoundError(f"Expected transcript sidecar not found: {sidecar_path}")
+            raise FileNotFoundError(
+                f"Expected transcript sidecar not found: {sidecar_path}"
+            )
         return None
     return sidecar_path.read_text(encoding="utf-8")
 
@@ -150,10 +154,14 @@ def benchmark_fixture(
     if load_engine_fn is None or transcribe_wav_fn is None:
         if backend == "whisper":
             from local_ai_dictation.whisper import load_engine as selected_load_engine
-            from local_ai_dictation.whisper import transcribe_wav as selected_transcribe_wav
+            from local_ai_dictation.whisper import (
+                transcribe_wav as selected_transcribe_wav,
+            )
         elif backend == "willow":
             from local_ai_dictation.willow import load_engine as selected_load_engine
-            from local_ai_dictation.willow import transcribe_wav as selected_transcribe_wav
+            from local_ai_dictation.willow import (
+                transcribe_wav as selected_transcribe_wav,
+            )
         else:
             selected_load_engine = load_engine
             selected_transcribe_wav = transcribe_wav
@@ -166,22 +174,35 @@ def benchmark_fixture(
 
     run_ms: list[float] = []
     final_result = None
-    for _ in range(runs):
-        run_start = perf_counter()
-        final_result = transcribe_wav_fn(engine, fixture)
-        run_ms.append((perf_counter() - run_start) * 1000.0)
+    try:
+        for _ in range(runs):
+            run_start = perf_counter()
+            final_result = transcribe_wav_fn(engine, fixture)
+            run_ms.append((perf_counter() - run_start) * 1000.0)
+    finally:
+        close = getattr(engine, "close", None)
+        if callable(close):
+            close()
 
     if final_result is None:
-        raise AppError(MODEL_TRANSCRIBE_FAILED, "Benchmark did not produce a transcription result")
+        raise AppError(
+            MODEL_TRANSCRIBE_FAILED, "Benchmark did not produce a transcription result"
+        )
 
     transcript = final_result.text
     normalized_transcript = normalize_transcript(transcript)
     normalized_match = (
-        normalized_exact_match(transcript, expected_text) if expected_text is not None else None
+        normalized_exact_match(transcript, expected_text)
+        if expected_text is not None
+        else None
     )
     total_ms = load_ms + sum(run_ms)
 
-    device = final_result.device or getattr(engine, "_parakeet_device", None) or ("cpu" if cpu else "cuda")
+    device = (
+        final_result.device
+        or getattr(engine, "_device", None)
+        or ("cpu" if cpu else "cuda")
+    )
 
     return BenchmarkReport(
         fixture=str(fixture_path),

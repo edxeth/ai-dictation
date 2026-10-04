@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-
 DEFAULT_BACKEND = "whisper"
 BACKEND_ORDER = ("whisper", "parakeet", "willow")
 _VALID_BACKENDS = set(BACKEND_ORDER)
@@ -39,7 +38,11 @@ def get_backend(env: Mapping[str, str] | None = None) -> str:
         return DEFAULT_BACKEND
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return DEFAULT_BACKEND
-    return normalize_backend(payload.get("backend")) if isinstance(payload, dict) else DEFAULT_BACKEND
+    return (
+        normalize_backend(payload.get("backend"))
+        if isinstance(payload, dict)
+        else DEFAULT_BACKEND
+    )
 
 
 def set_backend(backend: str, env: Mapping[str, str] | None = None) -> str:
@@ -57,7 +60,9 @@ def toggle_backend(env: Mapping[str, str] | None = None) -> str:
     return set_backend(target, env)
 
 
-def backend_payload(backend: str, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+def backend_payload(
+    backend: str, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     return {
         "backend": normalize_backend(backend),
         "state_path": str(state_path(env)),

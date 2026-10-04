@@ -28,4 +28,5 @@ Thumbs.db
 *.log
 transcriber.debug.log
 bun.lock
+!desktop/electrobun/bun.lock
 

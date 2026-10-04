@@ -21,8 +21,10 @@ export default {
     copy: {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
-      "src/mainview/assets/local-ai-dictation-icon.svg": "views/mainview/assets/local-ai-dictation-icon.svg",
-      "src/mainview/assets/local-ai-dictation-icon.png": "views/mainview/assets/local-ai-dictation-icon.png",
+      "src/mainview/assets/local-ai-dictation-icon.svg":
+        "views/mainview/assets/local-ai-dictation-icon.svg",
+      "src/mainview/assets/local-ai-dictation-icon.png":
+        "views/mainview/assets/local-ai-dictation-icon.png",
       "src/mainview/assets/session-start.wav": "views/mainview/assets/session-start.wav",
       "src/mainview/assets/session-complete.wav": "views/mainview/assets/session-complete.wav",
     },

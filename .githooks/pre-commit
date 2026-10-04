@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+scratch=$(mktemp -d)
+scratch=$(cd "$scratch" && pwd -P)
+trap 'rm -rf -- "$scratch"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+snapshot="$scratch/tree"
+mkdir "$snapshot"
+
+# A tree excludes intent-to-add entries, unlike checkout-index on the live index.
+# A separate index also avoids stashing or rewriting the user's staged content.
+tree=$(git write-tree)
+GIT_INDEX_FILE="$scratch/index" git read-tree "$tree"
+GIT_INDEX_FILE="$scratch/index" git checkout-index --all --prefix="$snapshot/"
+
+if [ ! -f "$snapshot/Makefile" ]; then
+  printf '%s\n' 'pre-commit: stage the Makefile and check tooling before committing.' >&2
+  exit 1
+fi
+
+for dependency in .venv desktop/electrobun/node_modules; do
+  if [ ! -d "$root/$dependency" ]; then
+    printf 'pre-commit: missing %s; install the development dependencies from README.md.\n' "$dependency" >&2
+    exit 1
+  fi
+  if [ -e "$snapshot/$dependency" ] || [ -L "$snapshot/$dependency" ]; then
+    printf 'pre-commit: %s must remain untracked.\n' "$dependency" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$snapshot/$dependency")"
+  ln -s "$root/$dependency" "$snapshot/$dependency"
+done
+
+# Checks may create disposable Git repositories. Do not point them at this one.
+unset $(git rev-parse --local-env-vars)
+export PYTHONPATH="$snapshot/src"
+cd "$snapshot"
+printf 'pre-commit: checking staged tree %s\n' "$tree"
+make check

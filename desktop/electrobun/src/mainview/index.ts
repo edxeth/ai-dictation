@@ -59,6 +59,8 @@ type BridgeHealthPayload = {
 type SessionStatus = SessionPayload["state"] | "offline";
 
 type RendererAutomationSnapshot = {
+  modelValueText: string;
+  switchModelButtonText: string;
   statusBadgeText: string;
   statusBadgeClassName: string;
   statusLine: string;
@@ -85,9 +87,6 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       toggleBackend: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
-      showWindow: { params: {}; response: { success: true } };
-      minimizeWindow: { params: {}; response: { success: true } };
-      closeWindow: { params: {}; response: { success: true } };
       reportRendererReady: { params: { userAgent: string }; response: { success: true } };
     };
     messages: {};
@@ -95,8 +94,10 @@ type DesktopRPC = {
   webview: {
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
-      runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
-      playSessionCue: { params: { kind: SessionCueKind }; response: { success: true } };
+      runAutomationAction: {
+        params: { action: RendererAutomationActionId };
+        response: RendererAutomationSnapshot;
+      };
     };
     messages: {};
   };
@@ -114,11 +115,6 @@ const rpc = Electroview.defineRPC<DesktopRPC>({
             return buildRendererAutomationSnapshot(currentState);
         }
       },
-      playSessionCue: async ({ kind }) => {
-        await primeSessionAudio();
-        playSessionCue(kind);
-        return { success: true } as const;
-      },
     },
     messages: {},
   },
@@ -135,8 +131,6 @@ const confirmMessage = document.getElementById("confirmMessage") as HTMLDivEleme
 const confirmCancelButton = document.getElementById("confirmCancelButton") as HTMLButtonElement;
 const confirmOkButton = document.getElementById("confirmOkButton") as HTMLButtonElement;
 const appShell = document.getElementById("appShell") as HTMLDivElement;
-const minimizeWindowButton = document.getElementById("minimizeWindowButton") as HTMLButtonElement;
-const closeWindowButton = document.getElementById("closeWindowButton") as HTMLButtonElement;
 const statusBadge = document.getElementById("statusBadge") as HTMLDivElement;
 const hotkeyValue = document.getElementById("hotkeyValue") as HTMLDivElement;
 const modelValue = document.getElementById("modelValue") as HTMLDivElement;
@@ -165,7 +159,6 @@ let sessionAudioContext: AudioContext | null = null;
 let bridgeEventSource: EventSource | null = null;
 let refreshStateInFlight = false;
 const APP_STARTED_AT = Date.now() / 1000;
-let lastObservedSessionState: SessionStatus = "offline";
 let lastPlayedStartCueAt: number | null = null;
 let lastPlayedCompleteCueAt: number | null = null;
 const sessionCueAudio: Record<SessionCueKind, HTMLAudioElement> = {
@@ -197,7 +190,10 @@ function renderHotkey(accelerator: string): string {
     Shift: "⇧",
     Super: isMac ? "⌃" : "Win",
   };
-  const parts = accelerator.split("+").map((part) => part.trim()).filter(Boolean);
+  const parts = accelerator
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
   return `<span class="hotkey-display">${parts
     .map((part) => `<span class="hotkey-key">${escapeHtml(keyMap[part] || part)}</span>`)
     .join("")}</span>`;
@@ -213,7 +209,7 @@ function escapeHtml(value: string): string {
 }
 
 function renderBackendLabel(backend: BackendName): string {
-  if (backend === "parakeet") return "Parakeet";
+  if (backend === "parakeet") return "Parakeet Ultra";
   if (backend === "willow") return "Willow Voice";
   return "Whisper";
 }
@@ -297,7 +293,10 @@ async function playSessionCueAsync(kind: SessionCueKind): Promise<void> {
       oscillator.frequency.setValueAtTime(kind === "start" ? 1046 : 740, pulseStart);
 
       gainNode.gain.setValueAtTime(0.0001, pulseStart);
-      gainNode.gain.exponentialRampToValueAtTime(kind === "start" ? 0.62 : 0.56, pulseStart + 0.006);
+      gainNode.gain.exponentialRampToValueAtTime(
+        kind === "start" ? 0.62 : 0.56,
+        pulseStart + 0.006,
+      );
       gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
 
       oscillator.connect(gainNode);
@@ -396,9 +395,13 @@ function getFilteredHistory(viewState: BridgeViewState | null): TranscriptHistor
   });
 }
 
-function buildRendererAutomationSnapshot(viewState: BridgeViewState | null): RendererAutomationSnapshot {
+function buildRendererAutomationSnapshot(
+  viewState: BridgeViewState | null,
+): RendererAutomationSnapshot {
   const filteredHistory = getFilteredHistory(viewState);
   return {
+    modelValueText: modelValue.textContent?.trim() || "",
+    switchModelButtonText: switchModelButton.textContent?.trim() || "",
     statusBadgeText: statusBadge.textContent?.trim() || "",
     statusBadgeClassName: statusBadge.className,
     statusLine: statusLine.textContent?.trim() || "",
@@ -428,7 +431,6 @@ function buildStateSignature(viewState: BridgeViewState): string {
   });
 }
 
-
 function normalizeBackendName(value: unknown): BackendName {
   return value === "parakeet" || value === "willow" ? value : "whisper";
 }
@@ -437,7 +439,9 @@ function buildViewStateFromHealthPayload(payload: BridgeHealthPayload): BridgeVi
   return {
     bridgeUrl: currentState?.bridgeUrl ?? "",
     bridgeStartCommand: currentState?.bridgeStartCommand ?? "",
-    preferredBackend: normalizeBackendName(payload.bridge?.model_backend ?? currentState?.preferredBackend),
+    preferredBackend: normalizeBackendName(
+      payload.bridge?.model_backend ?? currentState?.preferredBackend,
+    ),
     hotkey: currentState?.hotkey ?? "Ctrl+Alt+R",
     hotkeyRegistered: currentState?.hotkeyRegistered ?? false,
     connected: true,
@@ -445,31 +449,48 @@ function buildViewStateFromHealthPayload(payload: BridgeHealthPayload): BridgeVi
   };
 }
 
-function applyObservedBridgeState(viewState: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
+function applyObservedBridgeState(
+  viewState: BridgeViewState,
+  { allowCue = true }: { allowCue?: boolean } = {},
+) {
   const nextSessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
   const nextStartCueAt = viewState.connected
-    ? (typeof viewState.session.recording_started_at === "number" ? viewState.session.recording_started_at : viewState.session.started_at)
+    ? typeof viewState.session.recording_started_at === "number"
+      ? viewState.session.recording_started_at
+      : viewState.session.started_at
     : null;
   const nextCompleteCueAt = viewState.connected
-    ? (typeof viewState.session.clipboard_copied_at === "number" ? viewState.session.clipboard_copied_at : viewState.session.last_completed_at)
+    ? typeof viewState.session.clipboard_copied_at === "number"
+      ? viewState.session.clipboard_copied_at
+      : viewState.session.last_completed_at
     : null;
 
   if (allowCue) {
-    if (nextSessionState === "recording" && nextStartCueAt !== null && nextStartCueAt >= APP_STARTED_AT && nextStartCueAt !== lastPlayedStartCueAt) {
+    if (
+      nextSessionState === "recording" &&
+      nextStartCueAt !== null &&
+      nextStartCueAt >= APP_STARTED_AT &&
+      nextStartCueAt !== lastPlayedStartCueAt
+    ) {
       lastPlayedStartCueAt = nextStartCueAt;
       playSessionCue("start");
     }
 
-    if (nextCompleteCueAt !== null && nextCompleteCueAt >= APP_STARTED_AT && nextCompleteCueAt !== lastPlayedCompleteCueAt) {
+    if (
+      nextCompleteCueAt !== null &&
+      nextCompleteCueAt >= APP_STARTED_AT &&
+      nextCompleteCueAt !== lastPlayedCompleteCueAt
+    ) {
       lastPlayedCompleteCueAt = nextCompleteCueAt;
       playSessionCue("complete");
     }
   }
-
-  lastObservedSessionState = nextSessionState;
 }
 
-function applyBridgeViewState(viewState: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
+function applyBridgeViewState(
+  viewState: BridgeViewState,
+  { allowCue = true }: { allowCue?: boolean } = {},
+) {
   applyObservedBridgeState(viewState, { allowCue });
   const nextSignature = buildStateSignature(viewState);
   if (nextSignature !== lastRenderedStateSignature) {
@@ -529,7 +550,9 @@ function renderHistory(items: TranscriptHistoryItem[]) {
       const payload = item.payload;
       const cancelled = Boolean(payload.metadata?.cancelled_before_recording);
       const transcript = payload.transcript?.trim() || "";
-      const body = transcript || (cancelled ? "Cancelled before recording started." : "No transcript text was returned.");
+      const body =
+        transcript ||
+        (cancelled ? "Cancelled before recording started." : "No transcript text was returned.");
       const device = payload.device ? ` · ${escapeHtml(String(payload.device))}` : "";
       const isCopied = copiedHistoryIds.has(item.id);
       const copyAction = transcript
@@ -567,7 +590,9 @@ function renderState(viewState: BridgeViewState) {
 
   currentState = viewState;
   const sessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
-  const runningBackend = String(viewState.session.config.backend || viewState.preferredBackend) as BackendName;
+  const runningBackend = String(
+    viewState.session.config.backend || viewState.preferredBackend,
+  ) as BackendName;
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 
@@ -578,18 +603,32 @@ function renderState(viewState: BridgeViewState) {
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(nextFilteredHistory);
 
-  const lockedForBusyWork = viewState.connected && (viewState.session.model_loading || ["starting", "transcribing"].includes(viewState.session.state));
+  const lockedForBusyWork =
+    viewState.connected &&
+    (viewState.session.model_loading ||
+      ["starting", "transcribing"].includes(viewState.session.state));
   if (viewState.session.model_loading) {
-    setOverlay(true, "Loading model…", "The bridge is warming the model in the background. Recording will unlock automatically when it is ready.");
+    setOverlay(
+      true,
+      "Loading model…",
+      "The bridge is warming the model in the background. Recording will unlock automatically when it is ready.",
+    );
   } else if (viewState.session.state === "starting") {
     setOverlay(true, "Preparing to record…", "Recording is being prepared. Please wait a moment.");
   } else if (viewState.session.state === "transcribing") {
-    setOverlay(true, "Transcribing…", "Audio has been captured. Please wait while the active model generates the transcript.");
+    setOverlay(
+      true,
+      "Transcribing…",
+      "Audio has been captured. Please wait while the active model generates the transcript.",
+    );
   } else {
     setOverlay(false);
   }
 
-  toggleButton.disabled = !viewState.connected || viewState.session.model_loading || viewState.session.state === "transcribing";
+  toggleButton.disabled =
+    !viewState.connected ||
+    viewState.session.model_loading ||
+    viewState.session.state === "transcribing";
   switchModelButton.disabled = lockedForBusyWork;
   clearHistoryButton.disabled = !nextFilteredHistory.length || lockedForBusyWork;
 
@@ -600,7 +639,8 @@ function renderState(viewState: BridgeViewState) {
       : "Start the bridge command below, then use the button or your configured hotkey.";
   } else if (viewState.session.model_loading) {
     toggleButton.textContent = "Loading model…";
-    statusLine.textContent = "Bridge is warming the model. Recording will unlock automatically when ready.";
+    statusLine.textContent =
+      "Bridge is warming the model. Recording will unlock automatically when ready.";
   } else if (viewState.session.state === "starting") {
     toggleButton.textContent = "Cancel loading";
     statusLine.textContent = "Preparing to record…";
@@ -632,7 +672,8 @@ function renderState(viewState: BridgeViewState) {
 
   const errorLines = [];
   if (viewState.session.last_error) errorLines.push(viewState.session.last_error);
-  if (viewState.session.stderr_tail.length) errorLines.push(...viewState.session.stderr_tail.slice(-20));
+  if (viewState.session.stderr_tail.length)
+    errorLines.push(...viewState.session.stderr_tail.slice(-20));
   errorBox.textContent = errorLines.length ? errorLines.join("\n") : "No bridge errors.";
   errorBox.scrollTop = errorBox.scrollHeight;
 }
@@ -660,9 +701,10 @@ async function toggleRecording() {
   setBusy(true);
   try {
     const current = await electrobun.rpc!.request.getBridgeState({});
-    const next = current.connected && ["starting", "recording"].includes(current.session.state)
-      ? await electrobun.rpc!.request.stopRecording({})
-      : await electrobun.rpc!.request.startRecording({});
+    const next =
+      current.connected && ["starting", "recording"].includes(current.session.state)
+        ? await electrobun.rpc!.request.stopRecording({})
+        : await electrobun.rpc!.request.startRecording({});
     applyBridgeViewState(next);
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
@@ -702,28 +744,6 @@ async function clearHistory() {
   }
 }
 
-async function minimizeWindow() {
-  try {
-    await electrobun.rpc!.request.minimizeWindow({});
-  } catch (error) {
-    errorBox.textContent = error instanceof Error ? error.message : String(error);
-  }
-}
-
-async function closeWindow() {
-  try {
-    await electrobun.rpc!.request.closeWindow({});
-  } catch (error) {
-    errorBox.textContent = error instanceof Error ? error.message : String(error);
-  }
-}
-
-minimizeWindowButton.addEventListener("click", () => {
-  void minimizeWindow();
-});
-closeWindowButton.addEventListener("click", () => {
-  void closeWindow();
-});
 toggleButton.addEventListener("click", () => {
   void primeSessionAudio();
   void toggleRecording();
@@ -746,9 +766,13 @@ window.addEventListener("keydown", (event) => {
     void toggleRecording();
   }
 });
-window.addEventListener("pointerdown", () => {
-  void primeSessionAudio();
-}, { passive: true });
+window.addEventListener(
+  "pointerdown",
+  () => {
+    void primeSessionAudio();
+  },
+  { passive: true },
+);
 window.addEventListener("resize", syncViewportDensity);
 
 async function bootstrap() {

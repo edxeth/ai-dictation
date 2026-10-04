@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from argparse import Namespace
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, Sequence
-
 
 SchemaVersion = Literal[1]
 TranscriptFormat = Literal["text", "json"]
 ModelBackend = Literal["parakeet", "whisper", "willow"]
 IssueSeverity = Literal["warn", "fail"]
-OverallStatus = Literal["ok", "warn", "fail"]
 
 
 @dataclass(frozen=True)
@@ -80,27 +77,6 @@ class DictationConfig:
     log_file: str = "transcriber.debug.log"
     list_devices: bool = False
 
-    @classmethod
-    def from_namespace(cls, namespace: Namespace) -> "DictationConfig":
-        output_file = getattr(namespace, "output_file", None)
-        if output_file in {"", None}:
-            output_file = None
-        return cls(
-            backend=getattr(namespace, "backend", "whisper"),
-            cpu=bool(getattr(namespace, "cpu", False)),
-            input_device=getattr(namespace, "input_device", None),
-            vad=bool(getattr(namespace, "vad", False)),
-            max_silence_ms=int(getattr(namespace, "max_silence_ms", 1200)),
-            min_speech_ms=int(getattr(namespace, "min_speech_ms", 300)),
-            vad_mode=int(getattr(namespace, "vad_mode", 2)),
-            format=getattr(namespace, "format", "text"),
-            output_file=output_file,
-            clipboard=not bool(getattr(namespace, "no_clipboard", False)),
-            debug=bool(getattr(namespace, "debug", False)),
-            log_file=str(getattr(namespace, "log_file", "transcriber.debug.log")),
-            list_devices=bool(getattr(namespace, "list_devices", False)),
-        )
-
 
 @dataclass(frozen=True)
 class TranscriptionResult:
@@ -113,19 +89,8 @@ class TranscriptionResult:
 class VadBackend(Protocol):
     name: str
 
-    def is_speech(self, frame: bytes, sample_rate: int) -> bool:
-        ...
+    def is_speech(self, frame: bytes, sample_rate: int) -> bool: ...
 
 
 class TranscriptionEngine(Protocol):
-    def to(self, device: str) -> Any:
-        ...
-
-    def eval(self) -> Any:
-        ...
-
-    def parameters(self) -> Any:
-        ...
-
-    def transcribe(self, audio: Sequence[str], *, verbose: bool = False) -> Any:
-        ...
+    def transcribe(self, audio: Sequence[str]) -> Any: ...

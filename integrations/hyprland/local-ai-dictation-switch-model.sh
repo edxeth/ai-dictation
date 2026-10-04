@@ -13,7 +13,7 @@ printf '%s before=%s after=%s\n' "$(date --iso-8601=seconds)" "$before" "$after"
 
 case "$after" in
   whisper) label="Whisper" ;;
-  parakeet) label="Parakeet" ;;
+  parakeet) label="Parakeet Ultra" ;;
   willow) label="Willow Voice" ;;
   *) label="$after" ;;
 esac

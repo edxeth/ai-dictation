@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export type BridgeEndpoint = {
   host: string;
   port: string;
@@ -27,4 +29,22 @@ export function backendToggleCommand(cli: string, bridgeUrl: string): string[] {
     "--port",
     endpoint.port,
   ];
+}
+
+/** Read the saved model, using Whisper when the state file is missing or invalid. */
+export function readPreferredBackend(statePath: string): "whisper" | "parakeet" | "willow" {
+  try {
+    const payload: unknown = JSON.parse(readFileSync(statePath, "utf8"));
+    if (
+      payload !== null &&
+      typeof payload === "object" &&
+      "backend" in payload &&
+      (payload.backend === "parakeet" || payload.backend === "willow")
+    ) {
+      return payload.backend;
+    }
+  } catch {
+    return "whisper";
+  }
+  return "whisper";
 }
