@@ -484,6 +484,88 @@ def test_bridge_retries_willow_handshake_with_captured_audio(monkeypatch):
     controller.shutdown()
 
 
+def test_bridge_stops_recording_when_willow_ends_the_session(monkeypatch):
+    # A forgotten recording once ran for two hours after Willow had closed the
+    # session, so nothing could transcribe it. Capture must stop on its own.
+    server_closed = threading.Event()
+    recorder_result: list[str] = []
+
+    class StreamingSession:
+        def wait_ready(self) -> None:
+            return
+
+        def send_audio(self, pcm: bytes) -> None:
+            server_closed.set()
+
+        def ended_while_streaming(self) -> bool:
+            return server_closed.is_set()
+
+        def finish(self) -> str:
+            raise bridge_module.ModelError(
+                "MODEL_TRANSCRIBE_FAILED",
+                "Willow transcription failed: received 1000 (OK) Session complete; then sent 1000 (OK) Session complete",
+            )
+
+        def cancel(self) -> None:
+            return
+
+    class StreamingModel:
+        def start_streaming(self) -> StreamingSession:
+            return StreamingSession()
+
+    def model_loader(config, runtime_module, torch_module, *, status_stream=None):
+        return StreamingModel(), False, 0.0, 0.0
+
+    def recorder(
+        config,
+        pyaudio_module,
+        sample_rate=16000,
+        *,
+        stop_requested=None,
+        status_stream=None,
+        on_audio_chunk=None,
+    ):
+        pcm = b"\x01\x00" * 1600
+        assert on_audio_chunk is not None
+        on_audio_chunk(pcm)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if stop_requested is not None and stop_requested():
+                # Real recorders poll again while draining the last audio.
+                assert stop_requested()
+                recorder_result.append("stopped")
+                return pcm
+            time.sleep(0.01)
+        recorder_result.append("timed out")
+        return pcm
+
+    monkeypatch.setattr(
+        bridge_module, "has_probable_speech", lambda *args, **kwargs: True
+    )
+    controller = DictationBridgeController(
+        backend="willow",
+        runtime_loader=_runtime_loader,
+        model_loader=model_loader,
+        recorder=recorder,
+        clipboard=False,
+        transcript_timeout=5.0,
+    )
+
+    controller.start_session()
+    assert controller._session_finished.wait(timeout=3)
+    payload = controller.get_session_payload()
+
+    assert recorder_result == ["stopped"]
+    assert payload["state"] == "error"
+    assert "Session complete" in payload["last_error"]
+    ended_lines = [
+        line for line in payload["stderr_tail"] if "Willow ended the session" in line
+    ]
+    assert len(ended_lines) == 1
+
+    controller.shutdown()
+
+
 def test_willow_retry_policy_is_two_tries_then_twenty_seconds():
     assert bridge_module.WILLOW_STREAMING_RETRY_LIMIT == 2
     assert bridge_module.WILLOW_STREAMING_RETRY_DELAYS_S == (1.0, 2.0)

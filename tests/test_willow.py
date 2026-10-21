@@ -728,6 +728,9 @@ def test_streaming_session_send_audio_is_silent_after_self_terminated_session(
     while not session._finished.is_set() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert session._finished.is_set()
+    # A handshake failure must not stop capture: the bridge replays the
+    # captured audio into a fresh session instead.
+    assert session.ended_while_streaming() is False
     session.send_audio(b"\x00\x00" * 100)
 
     finish_errors: list[Exception] = []
@@ -736,6 +739,132 @@ def test_streaming_session_send_audio_is_silent_after_self_terminated_session(
     except Exception as exc:
         finish_errors.append(exc)
     assert finish_errors  # the underlying handshake error still surfaces
+
+
+def test_streaming_session_reports_server_close_during_capture():
+    # Willow can close a ready session on its own ("Session complete"). The
+    # bridge must learn this while capture is running, so it stops recording
+    # instead of capturing audio that nothing will transcribe.
+    def handler(socket):
+        incoming = WillowProtocol()
+        outgoing = WillowProtocol()
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None:
+                continue
+            key = envelope["d"]["key"]
+            if key == "health_packet":
+                socket.send(outgoing.encode("health_packet", {"ok": True})[0])
+            elif key == "audio_packet":
+                socket.close(code=1000, reason="Session complete")
+                return
+
+    with serve(handler, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.socket.getsockname()[1]
+        engine = WillowEngine(
+            access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe"
+        )
+        session = engine.start_streaming()
+        session.wait_ready()
+        assert session.ended_while_streaming() is False
+
+        deadline = time.monotonic() + 2.0
+        while not session.ended_while_streaming() and time.monotonic() < deadline:
+            session.send_audio(b"\x01\x00" * 512)
+            time.sleep(0.01)
+
+        assert session.ended_while_streaming() is True
+        with pytest.raises(ModelError, match="Session complete"):
+            session.finish()
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_streaming_session_finish_and_cancel_are_not_server_ends():
+    def handler(socket):
+        incoming = WillowProtocol()
+        outgoing = WillowProtocol()
+        while True:
+            envelope = incoming.accept(socket.recv())
+            if envelope is None:
+                continue
+            key = envelope["d"]["key"]
+            if key == "health_packet":
+                socket.send(outgoing.encode("health_packet", {"ok": True})[0])
+            elif key == "flush_packet":
+                socket.send(
+                    outgoing.encode(
+                        "dictation_result",
+                        {"actions": [{"type": "paste", "text": "Done"}]},
+                    )[0]
+                )
+                return
+
+    with serve(handler, "127.0.0.1", 0) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.socket.getsockname()[1]
+        engine = WillowEngine(
+            access_token="test-token", endpoint=f"ws://127.0.0.1:{port}/transcribe"
+        )
+        finished = engine.start_streaming()
+        finished.wait_ready()
+        finished.send_audio(b"\x01\x00" * 512)
+        assert finished.finish() == "Done"
+        assert finished.ended_while_streaming() is False
+
+        cancelled = engine.start_streaming()
+        cancelled.wait_ready()
+        cancelled.cancel()
+        assert cancelled.ended_while_streaming() is False
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_streaming_session_cancel_racing_the_end_check_is_not_a_server_end(
+    monkeypatch,
+):
+    # cancel() may run while the bridge's capture thread asks whether the
+    # session ended. A cancellation must never be reported as a server end.
+    class _IdleSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc_info):
+            return False
+
+        def close(self) -> None:
+            return
+
+    engine = WillowEngine(access_token="test-token")
+    monkeypatch.setattr(engine, "_ensure_fresh_session", lambda: None)
+    monkeypatch.setattr(engine, "_open_socket", lambda: _IdleSocket())
+    monkeypatch.setattr(engine, "_initialize_realtime_socket", lambda *args: None)
+    session = engine.start_streaming()
+    session.wait_ready()
+
+    ready = session._ready
+
+    class _CancelOnReadyCheck:
+        # Runs a full cancel() in the middle of the end check.
+        def is_set(self) -> bool:
+            canceller = threading.Thread(target=session.cancel, daemon=True)
+            canceller.start()
+            canceller.join(timeout=0.5)
+            return ready.is_set()
+
+        def __getattr__(self, name):
+            return getattr(ready, name)
+
+    session._ready = _CancelOnReadyCheck()
+
+    assert session.ended_while_streaming() is False
+    session._ready = ready
+    session._thread.join(timeout=2)
+    assert session._finished.is_set()
+    assert session.ended_while_streaming() is False
 
 
 def test_transcribe_wav_sends_willow_handshake_and_recording(tmp_path: Path):

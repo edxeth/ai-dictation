@@ -565,13 +565,23 @@ class DictationBridgeController:
                 self._state = "recording"
             self._notify_status()
 
+            session_ended = getattr(streaming_session, "ended_while_streaming", None)
+
+            def capture_stop_requested() -> bool:
+                if self._stop_requested.is_set() or self._shutdown_requested.is_set():
+                    return True
+                if callable(session_ended) and session_ended():
+                    self._append_diagnostic(
+                        "Willow ended the session; recording stopped"
+                    )
+                    return True
+                return False
+
             audio_data = self._recorder(
                 config,
                 self._pyaudio_module,
                 sample_rate=capture_sample_rate,
-                stop_requested=lambda: (
-                    self._stop_requested.is_set() or self._shutdown_requested.is_set()
-                ),
+                stop_requested=capture_stop_requested,
                 status_stream=self._diagnostic_stream,
                 **(
                     {"on_audio_chunk": on_audio_chunk}

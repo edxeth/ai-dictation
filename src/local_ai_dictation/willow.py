@@ -658,6 +658,23 @@ class WillowStreamingSession:
                 return
         self._enqueue(bytes(pcm), deadline=time.monotonic() + AUDIO_QUEUE_PUT_TIMEOUT)
 
+    def ended_while_streaming(self) -> bool:
+        """True when a ready session ended before finish() or cancel().
+
+        Willow may close a live session on its own ("Session complete"), and
+        the network may drop it. Audio sent after that point is discarded, so
+        the caller should stop capturing. A handshake failure does not count:
+        the bridge keeps capturing and replays the audio into a new session.
+        """
+        # finish() and cancel() set _finish_requested under this lock before
+        # they end the worker, so holding it keeps their ends out of the answer.
+        with self._state_lock:
+            return (
+                not self._finish_requested
+                and self._ready.is_set()
+                and self._finished.is_set()
+            )
+
     def finish(self) -> str:
         budget = self._engine._bounded_timeout(
             self._engine._connect_timeout + self._engine._result_timeout + 2.0
