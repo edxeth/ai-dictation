@@ -6,20 +6,18 @@ The command, package, configuration, and state names stay `local-ai-dictation` i
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-21
+
 ### 🐛 Bug Fixes
 
 #### Willow recordings stop when Willow ends the session
+Refs: `27ff3e3`
 
-Willow can close a live streaming session on its own; the bridge received the close message `1000 (OK) Session complete`. The bridge did not notice. It stayed in the recording state and discarded all later audio. A recording that was left running looked active in Waybar for hours. When it was finally stopped, the bridge reported `MODEL_TRANSCRIBE_FAILED` and pasted nothing.
+Fixed Willow recordings that stayed active after Willow closed the streaming session (`1000 (OK) Session complete`). The bridge kept recording and discarded all later audio. A recording left running looked active in Waybar for hours. When it was stopped, the bridge reported `MODEL_TRANSCRIBE_FAILED` and pasted nothing.
 
-Now the bridge stops capture as soon as a connected Willow session ends without a stop request. This includes a close from Willow and a network drop. The diagnostic log shows `Willow ended the session; recording stopped`. Then:
-
-- Silence is discarded, and the bridge returns to idle.
-- Audio that may contain speech goes through the normal stop path. After a network failure, the bridge retries with the captured audio. After a `Session complete` close, it reports an error and does not retry. This prevents background noise from a forgotten recording from being transcribed and pasted.
+The bridge now stops capture as soon as a connected Willow session ends without a stop request, whether Willow closed it or the network dropped. It logs `Willow ended the session; recording stopped`. Silence is discarded, and the bridge returns to idle. Audio that may contain speech goes through the normal stop path. After a network failure, the bridge retries with the captured audio. After a `Session complete` close, it reports an error and does not retry, so background noise from a forgotten recording is never pasted.
 
 A failed connection at the start of a recording still does not stop capture. The bridge keeps recording and replays the audio into a new session, as before.
-
-Waybar users: give `#custom-local_ai_dictation.error` a different color from `.recording`, so an error does not look like an active recording.
 
 ## [1.2.0] - 2026-10-04
 
@@ -163,7 +161,8 @@ Willow receives audio while you speak. On CUDA, Whisper transcribes rolling wind
 - 2026-04-01: Renamed to Local AI Dictation, with Whisper as the default backend and live backend switching (`58d3e3a`).
 - 2026-07-14: Willow Voice cloud backend (`704c3ee`).
 
-[Unreleased]: https://github.com/edxeth/ai-dictation/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/edxeth/ai-dictation/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/edxeth/ai-dictation/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/edxeth/ai-dictation/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/edxeth/ai-dictation/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/edxeth/ai-dictation/compare/v1.1.0...v1.1.1
