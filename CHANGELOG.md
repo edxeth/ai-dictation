@@ -2,6 +2,22 @@
 
 All notable changes to AI Dictation are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+#### Parakeet Redux, Bark 3.0, and Bark 3.0 Pro backends
+
+Added three local backends that run on the same Kestrel runtime as Parakeet Ultra: `parakeet-redux` (`moondream/parakeet-redux`, ternary weights, 25 languages), `bark` (`ConwayResearch/Underdog-Bark-3.0`, English), and `bark-pro` (`ConwayResearch/Underdog-Bark-3.0-Pro`, English). Select them with `local-ai-dictation backend set <key>`, `--backend <key>`, the config file, or `LOCAL_AI_DICTATION_BACKEND`. The GUI, Waybar widget, and model-switch notifications show their names.
+
+Both Bark repositories are pinned to the tested commits. Bark 3.0 downloads a 163 MB packed `model.bark` file. On first load the app decodes it once, with a vendored decoder, into a checkpoint under `$XDG_CACHE_HOME/local-ai-dictation/models/`. This adds the `constriction` and `safetensors` dependencies.
+
+The backend cycle (`backend toggle` and the GUI switch control) now visits the new backends between Parakeet Ultra and Willow.
+
+#### Waybar model menu
+
+Added `integrations/hyprland/local-ai-dictation-model-menu.sh`. Bound to the Waybar module's right click, it opens a Walker menu of every backend with the current one marked. Picking a backend switches to it directly, with one bridge restart, so only the chosen model loads. Before this, reaching a backend meant cycling through, and loading, every backend in between.
+
 ## [1.2.1] - 2026-10-21
 
 ### Fixed

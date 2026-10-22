@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
 import { native, toCString } from "../../node_modules/electrobun/dist/api/bun/proc/native";
+import { type BackendName, normalizeBackendName } from "../shared/backends";
 import { backendToggleCommand, bridgeEndpoint, readPreferredBackend } from "./backend-command";
 
 type SessionPayload = {
@@ -25,8 +26,6 @@ type SessionPayload = {
   config: Record<string, unknown>;
   stderr_tail: string[];
 };
-
-type BackendName = "whisper" | "parakeet" | "willow";
 
 type BridgeViewState = {
   bridgeUrl: string;
@@ -198,10 +197,6 @@ const BACKEND_STATE_PATH = Bun.env.XDG_STATE_HOME
     : "/tmp/local-ai-dictation-backend.json";
 const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
 
-function normalizeBackend(value: string | null | undefined): BackendName {
-  return value === "parakeet" || value === "willow" ? value : "whisper";
-}
-
 function localCliPath(): string {
   const home = Bun.env.HOME;
   if (home) {
@@ -233,7 +228,7 @@ function toggleBackendAndRestartBridge(): BackendName {
     throw new Error(error);
   }
   const text = Buffer.from(result.stdout).toString("utf8").trim();
-  return normalizeBackend(text || readPreferredBackend(BACKEND_STATE_PATH));
+  return normalizeBackendName(text || readPreferredBackend(BACKEND_STATE_PATH));
 }
 
 function buildBridgeStartCommand(backend: BackendName): string {

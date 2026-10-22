@@ -8,7 +8,19 @@ from pathlib import Path
 from typing import Any, Mapping
 
 DEFAULT_BACKEND = "whisper"
-BACKEND_ORDER = ("whisper", "parakeet", "willow")
+# Persisted keys, in switching order. "parakeet" is kept as the key for
+# Parakeet Ultra so selections saved by earlier releases stay valid.
+BACKEND_LABELS = {
+    "whisper": "Whisper",
+    "parakeet": "Parakeet Ultra",
+    "parakeet-redux": "Parakeet Redux",
+    "bark": "Bark 3.0",
+    "bark-pro": "Bark 3.0 Pro",
+    "willow": "Willow",
+}
+BACKEND_ORDER = tuple(BACKEND_LABELS)
+# Local Parakeet TDT checkpoints served by the Kestrel runtime (model.py).
+KESTREL_BACKENDS = frozenset({"parakeet", "parakeet-redux", "bark", "bark-pro"})
 _VALID_BACKENDS = set(BACKEND_ORDER)
 
 

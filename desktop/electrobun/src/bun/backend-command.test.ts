@@ -25,16 +25,19 @@ describe("backend bridge command", () => {
 });
 
 describe("persisted backend", () => {
-  test.each(["whisper", "parakeet", "willow"])("reads the saved %s selection", (backend) => {
-    const directory = mkdtempSync(join(tmpdir(), "dictation-backend-"));
-    try {
-      const path = join(directory, "backend.json");
-      writeFileSync(path, JSON.stringify({ backend }));
-      expect(readPreferredBackend(path)).toBe(backend);
-    } finally {
-      rmSync(directory, { recursive: true });
-    }
-  });
+  test.each(["whisper", "parakeet", "parakeet-redux", "bark", "bark-pro", "willow"])(
+    "reads the saved %s selection",
+    (backend) => {
+      const directory = mkdtempSync(join(tmpdir(), "dictation-backend-"));
+      try {
+        const path = join(directory, "backend.json");
+        writeFileSync(path, JSON.stringify({ backend }));
+        expect(readPreferredBackend(path)).toBe(backend);
+      } finally {
+        rmSync(directory, { recursive: true });
+      }
+    },
+  );
 
   test.each(["{", "null", '{"backend":"unknown"}', '{"backend":42}'])(
     "falls back for invalid state %s",

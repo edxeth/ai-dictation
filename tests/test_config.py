@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
+from local_ai_dictation import cli
 from local_ai_dictation.config import resolve_config
 from local_ai_dictation.dictation import build_parser
+
+_NEW_KESTREL_BACKENDS = ["parakeet-redux", "bark", "bark-pro"]
 
 
 def _parse(argv: list[str]):
@@ -32,6 +37,54 @@ def test_willow_backend_is_accepted_from_environment(tmp_path):
     )
 
     assert config.backend == "willow"
+
+
+@pytest.mark.parametrize("backend", _NEW_KESTREL_BACKENDS)
+def test_new_local_backends_are_accepted_from_every_source(tmp_path, backend):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'backend = "{backend}"\n', encoding="utf-8")
+    missing = tmp_path / "missing.toml"
+
+    assert resolve_config(_parse([]), env={}, config_path=config_path).backend == (
+        backend
+    )
+    assert (
+        resolve_config(
+            _parse([]), env={"LOCAL_AI_DICTATION_BACKEND": backend}, config_path=missing
+        ).backend
+        == backend
+    )
+    assert (
+        resolve_config(
+            _parse(["--backend", backend]), env={}, config_path=missing
+        ).backend
+        == backend
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["bridge", "--backend"],
+        ["doctor", "--backend"],
+        ["benchmark", "--fixture", "x.wav", "--backend"],
+        ["gui", "--backend"],
+        ["dictation", "--backend"],
+    ],
+)
+@pytest.mark.parametrize("backend", _NEW_KESTREL_BACKENDS)
+def test_every_backend_option_offers_the_new_local_backends(argv, backend):
+    namespace = cli.build_parser().parse_args([*argv, backend])
+
+    assert namespace.backend == backend
+
+
+def test_config_file_rejects_an_unknown_backend(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('backend = "bark-ultra"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="bark-ultra"):
+        resolve_config(_parse([]), env={}, config_path=config_path)
 
 
 def test_config_file_overrides_defaults(tmp_path):

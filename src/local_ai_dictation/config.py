@@ -7,7 +7,7 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from local_ai_dictation.backend_state import get_backend
+from local_ai_dictation.backend_state import BACKEND_ORDER, get_backend
 from local_ai_dictation.types import DictationConfig, TranscriptFormat
 
 try:  # pragma: no cover - exercised indirectly on Python 3.10
@@ -57,7 +57,7 @@ def _parse_format(value: Any) -> TranscriptFormat:
 
 def _parse_backend(value: Any) -> str:
     text = str(value).strip().lower()
-    if text not in {"parakeet", "whisper", "willow"}:
+    if text not in BACKEND_ORDER:
         raise ValueError(f"Invalid backend: {value!r}")
     return text
 

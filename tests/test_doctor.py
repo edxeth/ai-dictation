@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from local_ai_dictation.cli import main
 from local_ai_dictation.doctor import collect_doctor_report, doctor_exit_code
 from local_ai_dictation.model import MODEL_ID
@@ -95,6 +97,40 @@ def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
         "backend": "parakeet",
     }
     assert report.status["overall"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("backend", "model_id"),
+    [
+        ("parakeet-redux", "moondream/parakeet-redux"),
+        ("bark", "ConwayResearch/Underdog-Bark-3.0"),
+        ("bark-pro", "ConwayResearch/Underdog-Bark-3.0-Pro"),
+    ],
+)
+def test_collect_doctor_report_checks_the_selected_local_model(
+    monkeypatch, backend, model_id
+):
+    _stub_ready_runtime(monkeypatch)
+    checked = []
+
+    def check(*, backend):
+        checked.append(backend)
+        return {"checked": True, "cache_present": True, "model_id": model_id}
+
+    monkeypatch.setattr("local_ai_dictation.doctor.check_model_cache", check)
+
+    unchecked = collect_doctor_report(backend=backend)
+    report = collect_doctor_report(True, backend=backend)
+
+    assert unchecked.model == {
+        "checked": False,
+        "cache_present": None,
+        "model_id": model_id,
+        "backend": backend,
+    }
+    assert checked == [backend]
+    assert report.model["backend"] == backend
+    assert report.model["model_id"] == model_id
 
 
 def test_collect_doctor_report_targets_willow_backend(monkeypatch):
@@ -196,7 +232,7 @@ def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
-        lambda: {
+        lambda *, backend: {
             "checked": True,
             "cache_present": True,
             "cache_path": "/tmp/model-cache",
@@ -230,7 +266,7 @@ def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_impo
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
-        lambda: {
+        lambda *, backend: {
             "checked": True,
             "cache_present": False,
             "cache_path": None,
@@ -289,7 +325,7 @@ def test_doctor_command_emits_model_check_json(monkeypatch, capsys):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
-        lambda: {
+        lambda *, backend: {
             "checked": True,
             "cache_present": True,
             "cache_path": "/tmp/model-cache",

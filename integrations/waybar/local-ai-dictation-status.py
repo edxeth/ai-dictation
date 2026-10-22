@@ -19,6 +19,16 @@ LAST_STATE_PATH = STATE_DIR / "last-state"
 LAST_COMPLETED_PATH = STATE_DIR / "last-completed-at"
 BACKEND_STATE_PATH = STATE_HOME / "local-ai-dictation" / "backend.json"
 ASSET_DIR = Path(os.environ.get("LOCAL_AI_DICTATION_ASSET_DIR", "/nonexistent"))
+# Matches BACKEND_LABELS in src/local_ai_dictation/backend_state.py; this script
+# runs standalone from the Waybar config, outside the package environment.
+BACKEND_LABELS = {
+    "whisper": "Whisper",
+    "parakeet": "Parakeet Ultra",
+    "parakeet-redux": "Parakeet Redux",
+    "bark": "Bark 3.0",
+    "bark-pro": "Bark 3.0 Pro",
+    "willow": "Willow",
+}
 START_CUE = ASSET_DIR / "session-start.wav"
 COMPLETE_CUE = ASSET_DIR / "session-complete.wav"
 
@@ -29,15 +39,11 @@ def preferred_backend() -> str:
         backend = str(payload.get("backend") or "whisper").strip().lower()
     except Exception:
         backend = "whisper"
-    return backend if backend in {"whisper", "parakeet", "willow"} else "whisper"
+    return backend if backend in BACKEND_LABELS else "whisper"
 
 
 def backend_label(value: str) -> str:
-    return {
-        "whisper": "Whisper",
-        "parakeet": "Parakeet Ultra",
-        "willow": "Willow",
-    }.get(value, "Whisper")
+    return BACKEND_LABELS.get(value, "Whisper")
 
 
 def read_last_state() -> str | None:
@@ -137,9 +143,7 @@ def classify(payload: dict[str, object] | None) -> tuple[str, str, str, str]:
         else preferred
     )
     running_backend = (
-        running_backend
-        if running_backend in {"whisper", "parakeet", "willow"}
-        else preferred
+        running_backend if running_backend in BACKEND_LABELS else preferred
     )
     running_text = backend_label(running_backend)
     module_text = f"󰍬 {running_text}"

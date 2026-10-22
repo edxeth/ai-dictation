@@ -22,7 +22,7 @@ from local_ai_dictation.audio import (
     resample_pcm16_mono,
     resolve_input_sample_rate,
 )
-from local_ai_dictation.backend_state import get_backend
+from local_ai_dictation.backend_state import KESTREL_BACKENDS, get_backend
 from local_ai_dictation.dictation import (
     _load_model,
     _load_runtime_dependencies,
@@ -353,7 +353,7 @@ class DictationBridgeController:
 
             if self.backend == "whisper":
                 from local_ai_dictation.whisper import warmup as warmup_model
-            elif self.backend == "parakeet":
+            elif self.backend in KESTREL_BACKENDS:
                 from local_ai_dictation.model import warmup as warmup_model
             else:
                 return

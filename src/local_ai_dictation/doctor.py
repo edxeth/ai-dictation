@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -22,7 +23,7 @@ from local_ai_dictation.errors import (
     ExitCode,
 )
 from local_ai_dictation.gpu import nvidia_driver_loaded
-from local_ai_dictation.model import MODEL_ID, check_model_cache
+from local_ai_dictation.model import check_model_cache, kestrel_model_spec
 from local_ai_dictation.types import AudioDevice, DoctorIssue, DoctorReport
 
 
@@ -157,8 +158,8 @@ def _collect_model_status(
 
         model_id = "willow/frontier-auto"
     else:
-        selected_check = check_model_cache
-        model_id = MODEL_ID
+        selected_check = partial(check_model_cache, backend=backend)
+        model_id = kestrel_model_spec(backend).repo_id
 
     if not check_model_cache_enabled:
         return {

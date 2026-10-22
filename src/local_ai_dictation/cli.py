@@ -17,6 +17,7 @@ from urllib.request import urlopen
 
 from local_ai_dictation.audio import list_input_devices
 from local_ai_dictation.backend_state import (
+    BACKEND_ORDER,
     backend_payload,
     get_backend,
     set_backend,
@@ -136,7 +137,7 @@ def _restart_running_bridge(host: str, port: int) -> None:
 def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         default=None,
         help="Transcription backend for bridge-controlled dictation sessions.",
     )
@@ -250,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         default=None,
         help="Backend readiness to diagnose (defaults to the persisted selection).",
     )
@@ -274,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         default="parakeet",
         help="Transcription backend to benchmark.",
     )
@@ -341,7 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     backend_parser.add_argument(
         "backend_name",
         nargs="?",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         help="Backend to persist when using the set action.",
     )
     backend_parser.add_argument(
@@ -409,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         default=None,
         help="Backend name used when generating the default bridge startup command.",
     )

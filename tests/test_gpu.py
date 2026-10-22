@@ -49,7 +49,9 @@ def _install_parakeet_runtime(monkeypatch, torch_module, *, driver_loaded=False)
         return runtime
 
     monkeypatch.setattr(model_module, "nvidia_driver_loaded", lambda: driver_loaded)
-    monkeypatch.setattr(model_module, "_resolve_model_path", lambda: "/cached/ultra")
+    monkeypatch.setattr(
+        model_module, "_resolve_model_path", lambda spec: "/cached/ultra"
+    )
     monkeypatch.setattr(
         model_module,
         "_load_runtime_dependencies",

@@ -2,7 +2,8 @@
 
 AI voice dictation with local and cloud transcription for Linux, plus a desktop GUI and system integrations:
 
-- local **Whisper** and **Parakeet Ultra** speech-to-text backends
+- local **Whisper**, **Parakeet Ultra**, **Parakeet Redux**, **Bark 3.0**, and
+  **Bark 3.0 Pro** speech-to-text backends
 - the **Willow Voice** cloud backend
 - a persistent localhost bridge
 - a native Electrobun control GUI
@@ -25,6 +26,9 @@ local-ai-dictation gui
 local-ai-dictation backend get
 local-ai-dictation backend set whisper
 local-ai-dictation backend set parakeet
+local-ai-dictation backend set parakeet-redux
+local-ai-dictation backend set bark
+local-ai-dictation backend set bark-pro
 local-ai-dictation backend set willow
 local-ai-dictation backend toggle --restart-bridge
 
@@ -60,6 +64,53 @@ local-ai-dictation benchmark --backend willow --fixture recording.wav --runs 1 -
 - The persistent bridge performs a real inference warmup. Transcription remains
   batch-based and starts after recording stops; live streaming is not enabled.
 - The `parakeet` backend key, desktop controls, and hotkeys are unchanged.
+
+### Parakeet Redux, Bark 3.0, and Bark 3.0 Pro
+
+These three backends use the same Kestrel runtime as Parakeet Ultra. They
+use the same direct path, without telemetry. They use CUDA when it is
+available and the CPU when it is not. The bridge warms up the model when it
+starts. Transcription starts after the recording stops.
+
+| Backend key | Model | Languages | Notes |
+| --- | --- | --- | --- |
+| `parakeet-redux` | `moondream/parakeet-redux` | 25 | The weights are ternary (each weight is -1, 0, or +1). The download is 178 MB. On the CPU, it was about 4 times faster than Parakeet Ultra in testing. On CUDA, Kestrel expands the weights to full size, so it uses about the same GPU memory as Parakeet Ultra. |
+| `bark` | `ConwayResearch/Underdog-Bark-3.0` | English | The download is a packed 163 MB file, `model.bark`. On the first load, the app unpacks it one time into a 1.3 GB checkpoint (a folder of model files). The unpack takes one to two minutes. |
+| `bark-pro` | `ConwayResearch/Underdog-Bark-3.0-Pro` | English | The download is 1.25 GB of full-precision bf16 weights. |
+
+The app keeps the unpacked Bark 3.0 checkpoint in
+`$XDG_CACHE_HOME/local-ai-dictation/models/`. If `XDG_CACHE_HOME` is not set,
+the folder is `~/.cache/local-ai-dictation/models/`.
+
+Other facts about these backends:
+
+- The app pins both Bark repositories to the commits that it was tested with.
+  New uploads to these repositories do not change the weights. The Moondream
+  repositories follow `main`, as Kestrel does.
+- Bark is a fine-tune of Parakeet TDT 0.6B v3, so Kestrel loads it as that
+  model. Bark 3.0 does not include `tokenizer.json`. The app uses the NVIDIA
+  tokenizer from the revision that Kestrel pins. Bark uses this tokenizer
+  without changes.
+- The app unpacks `model.bark` with its own decoder in
+  `src/local_ai_dictation/bark_format.py`. It does not run the Python files in
+  the model repository. The unpacked weights are identical, bit for bit, to
+  the output of the `bark_loader.py` script from Underdog.
+- If two processes load Bark 3.0 for the first time together, only one of
+  them unpacks it. The other process waits and then uses the result.
+- Bark has no voice activity head (a part of the model that finds pauses).
+  For long recordings, Kestrel splits the audio at quiet points that it finds
+  from the sound level. Parakeet Ultra and Parakeet Redux find the pauses with
+  the model.
+
+The models were tested on 2,308 clips from the English test sets of the Open
+ASR Leaderboard, on an RTX 3060. The scores use the text normalizer of the
+leaderboard. The average word error rate was 4.95% for Bark 3.0 Pro, 5.26% for
+Parakeet Ultra, 5.50% for Bark 3.0, and 6.01% for Parakeet Redux. Bark 3.0 Pro
+was better on meeting speech (AMI) and parliament speech (VoxPopuli). On the
+other sets, it had the same result as Parakeet Ultra. On noisy speech, Bark
+3.0 Pro and Parakeet Ultra had the same result, and both were better than
+Bark 3.0 and Parakeet Redux. For languages other than English, use a
+Parakeet model.
 
 ### Willow Voice cloud
 
@@ -253,7 +304,7 @@ The GUI displays the running backend, bridge command, session state,
 transcription history, errors, and a model switch control that cycles:
 
 ```text
-Whisper → Parakeet Ultra → Willow → Whisper
+Whisper → Parakeet Ultra → Parakeet Redux → Bark 3.0 → Bark 3.0 Pro → Willow Voice → Whisper
 ```
 
 Switching backend restarts the bridge so local model VRAM is released. The GUI
@@ -281,6 +332,7 @@ primary Arch/Hyprland environment:
 integrations/bin/local-ai-dictation-bridge
 integrations/hyprland/local-ai-dictation-toggle.sh
 integrations/hyprland/local-ai-dictation-switch-model.sh
+integrations/hyprland/local-ai-dictation-model-menu.sh
 integrations/waybar/local-ai-dictation-status.py
 integrations/applications/local-ai-dictation.desktop
 ```
@@ -294,6 +346,8 @@ install -Dm755 integrations/hyprland/local-ai-dictation-toggle.sh \
   ~/.config/hypr/scripts/local-ai-dictation-toggle.sh
 install -Dm755 integrations/hyprland/local-ai-dictation-switch-model.sh \
   ~/.config/hypr/scripts/local-ai-dictation-switch-model.sh
+install -Dm755 integrations/hyprland/local-ai-dictation-model-menu.sh \
+  ~/.config/hypr/scripts/local-ai-dictation-model-menu.sh
 install -Dm755 integrations/waybar/local-ai-dictation-status.py \
   ~/.config/waybar/scripts/local-ai-dictation-status.py
 ```
@@ -335,10 +389,17 @@ dunst, and wl-clipboard or xclip).
   "signal": 8,
   "exec": "~/.config/waybar/scripts/local-ai-dictation-status.py",
   "on-click": "~/.config/hypr/scripts/local-ai-dictation-toggle.sh",
-  "on-click-right": "~/.config/hypr/scripts/local-ai-dictation-switch-model.sh",
+  "on-click-right": "~/.config/hypr/scripts/local-ai-dictation-model-menu.sh",
   "tooltip": true
 }
 ```
+
+The model menu uses [Walker](https://github.com/abenz1267/walker) in dmenu
+mode (Walker reads the menu lines and returns the selected line). To use a
+Walker theme, set `LOCAL_AI_DICTATION_WALKER_THEME` to the theme name. If this
+variable is not set, Walker uses the theme from its configuration. To use the
+older cycle, which moves to the next backend on each click, set
+`on-click-right` to `~/.config/hypr/scripts/local-ai-dictation-switch-model.sh`.
 
 Add `custom/local_ai_dictation` to a Waybar module list. Example styling:
 
@@ -369,19 +430,26 @@ Add `custom/local_ai_dictation` to a Waybar module list. Example styling:
 Behavior:
 
 - Left click or `Super+R`: start/stop recording.
-- Right click: persist the next backend and restart the bridge.
-- Display: `󰍬 Whisper`, `󰍬 Parakeet Ultra`, or `󰍬 Willow`.
+- Right click: Walker shows a menu of all backends and marks the current
+  backend. If you select a different backend, the app saves it and restarts
+  the bridge one time. Only the selected model loads. If you press Escape or
+  select the current backend, nothing changes.
+- Display: `󰍬 Whisper`, `󰍬 Parakeet Ultra`, `󰍬 Parakeet Redux`,
+  `󰍬 Bark 3.0`, `󰍬 Bark 3.0 Pro`, or `󰍬 Willow`.
 - Successful completion: copy the transcript, then ask Hyprland to paste into
   the focused application directly from the bridge; Waybar remains the fallback.
 - Ghostty uses `Ctrl+Shift+V`; other applications use `Ctrl+V`.
 - State changes signal Waybar with `RTMIN+8`; no timer polling is required.
 - `/health` remains available for one-shot status and recovery checks.
 
-The switch order is deterministic, and the selected backend remains active
-after logout or reboot:
+The selected backend stays active after logout or reboot.
+`local-ai-dictation backend toggle` saves the next backend in a fixed order.
+`local-ai-dictation backend toggle --restart-bridge` and
+`local-ai-dictation-switch-model.sh` also restart the bridge with that backend,
+so each step loads a model:
 
 ```text
-Whisper → Parakeet Ultra → Willow → Whisper
+Whisper → Parakeet Ultra → Parakeet Redux → Bark 3.0 → Bark 3.0 Pro → Willow → Whisper
 ```
 
 ## Omarchy and other Hyprland distributions
@@ -441,10 +509,11 @@ and transport security.
 
 ## Operational notes
 
-- Parakeet Ultra uses GPU memory for weights and inference buffers. Leave
-  headroom for other applications, especially on a 6 GB GPU.
+- The Kestrel models (Parakeet Ultra, Parakeet Redux, Bark 3.0, and Bark 3.0
+  Pro) use about 1.7 GB of GPU memory each for weights and inference buffers.
+  Keep free GPU memory for other applications, especially on a 6 GB GPU.
 - Kestrel is pinned because this integration uses its exported lower-level
-  Parakeet Ultra runtime. Before an upgrade, repeat GPU/CPU inference and a cached,
+  Parakeet TDT runtime. Before an upgrade, repeat GPU/CPU inference and a cached,
   network-traced run to verify that the direct path still avoids telemetry.
 - Willow uses cloud processing and does not consume local model VRAM.
 - Switching backend restarts the bridge and releases the previous local model.

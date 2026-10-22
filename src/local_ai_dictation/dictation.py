@@ -37,6 +37,11 @@ from local_ai_dictation.audio import (
     resolve_input_device_id,
     resolve_input_sample_rate,
 )
+from local_ai_dictation.backend_state import (
+    BACKEND_LABELS,
+    BACKEND_ORDER,
+    KESTREL_BACKENDS,
+)
 from local_ai_dictation.config import resolve_config
 from local_ai_dictation.errors import (
     AUDIO_BACKEND_UNREACHABLE,
@@ -90,7 +95,7 @@ def _no_kbi_traceback(exc_type, exc, tb) -> None:
 sys.excepthook = _no_kbi_traceback
 
 
-HELP_DESC = "AI Dictation with selectable Whisper, Parakeet Ultra, or Willow backends."
+HELP_DESC = "AI Dictation with selectable Whisper, Parakeet, Bark, or Willow backends."
 HELP_EPILOG = """Examples:
   local-ai-dictation dictation
   local-ai-dictation dictation --backend whisper
@@ -104,7 +109,7 @@ HELP_EPILOG = """Examples:
 def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "--backend",
-        choices=["parakeet", "whisper", "willow"],
+        choices=list(BACKEND_ORDER),
         default=None,
         help="Select the transcription backend",
     )
@@ -326,7 +331,7 @@ def _load_runtime_dependencies(backend: str, debug: bool):
     if not debug:
         _silence_start()
     try:
-        if backend == "parakeet":
+        if backend in KESTREL_BACKENDS:
             runtime_module = importlib.import_module("local_ai_dictation.model")
         elif backend == "whisper":
             runtime_module = importlib.import_module("faster_whisper")
@@ -675,7 +680,7 @@ def _load_model(
                     compute_type=compute_type,
                     model_id=WHISPER_MODEL_ID,
                 )
-            elif config.backend == "parakeet":
+            elif config.backend in KESTREL_BACKENDS:
                 model = runtime_module.load_engine(config)
                 use_cuda = model._device == "cuda"
             elif config.backend == "willow":
@@ -861,8 +866,9 @@ def run_dictation(args: argparse.Namespace) -> int:
 
     if config.backend == "whisper":
         print("🚀 LOCAL AI DICTATION · WHISPER DISTIL LARGE V3.5", file=status_stream)
-    elif config.backend == "parakeet":
-        print("🚀 LOCAL AI DICTATION · PARAKEET ULTRA", file=status_stream)
+    elif config.backend in KESTREL_BACKENDS:
+        label = BACKEND_LABELS[config.backend].upper()
+        print(f"🚀 LOCAL AI DICTATION · {label}", file=status_stream)
     else:
         print(
             "☁️ LOCAL AI DICTATION · WILLOW VOICE FRONTIER (SERVER-SELECTED)",
@@ -957,7 +963,11 @@ def run_dictation(args: argparse.Namespace) -> int:
                     f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s",
                     file=status_stream,
                 )
-                if use_cuda and config.backend == "parakeet" and nvidia_driver_loaded():
+                if (
+                    use_cuda
+                    and config.backend in KESTREL_BACKENDS
+                    and nvidia_driver_loaded()
+                ):
                     print(
                         f"GPU alloc (MiB) after infer: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
                         file=status_stream,

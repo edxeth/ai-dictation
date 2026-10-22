@@ -1,4 +1,10 @@
 import Electrobun, { Electroview } from "electrobun/view";
+import {
+  BACKEND_LABELS,
+  type BackendName,
+  nextBackend,
+  normalizeBackendName,
+} from "../shared/backends";
 import { startBridgeStateRefresh } from "./bridge-state-refresh";
 
 type TranscriptPayload = {
@@ -30,8 +36,6 @@ type SessionPayload = {
   config: Record<string, unknown>;
   stderr_tail: string[];
 };
-
-type BackendName = "whisper" | "parakeet" | "willow";
 
 type BridgeViewState = {
   bridgeUrl: string;
@@ -209,15 +213,7 @@ function escapeHtml(value: string): string {
 }
 
 function renderBackendLabel(backend: BackendName): string {
-  if (backend === "parakeet") return "Parakeet Ultra";
-  if (backend === "willow") return "Willow Voice";
-  return "Whisper";
-}
-
-function nextBackend(backend: BackendName): BackendName {
-  if (backend === "whisper") return "parakeet";
-  if (backend === "parakeet") return "willow";
-  return "whisper";
+  return BACKEND_LABELS[backend];
 }
 
 function renderHistoryActionIcon(copied: boolean): string {
@@ -431,10 +427,6 @@ function buildStateSignature(viewState: BridgeViewState): string {
   });
 }
 
-function normalizeBackendName(value: unknown): BackendName {
-  return value === "parakeet" || value === "willow" ? value : "whisper";
-}
-
 function buildViewStateFromHealthPayload(payload: BridgeHealthPayload): BridgeViewState {
   return {
     bridgeUrl: currentState?.bridgeUrl ?? "",
@@ -590,9 +582,9 @@ function renderState(viewState: BridgeViewState) {
 
   currentState = viewState;
   const sessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
-  const runningBackend = String(
+  const runningBackend = normalizeBackendName(
     viewState.session.config.backend || viewState.preferredBackend,
-  ) as BackendName;
+  );
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 

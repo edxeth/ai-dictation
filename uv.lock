@@ -144,6 +144,31 @@ wheels = [
 ]
 
 [[package]]
+name = "constriction"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/93/40c73a939b1de1e1aa5af60b6ad7f67c1ce06e437c9e0822260779d7cd31/constriction-0.5.0-cp310-cp310-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:78593838cabbaca8873a687fac5cdf98dbef7486afcdc73725090906d3336cc1", size = 740108, upload-time = "2026-07-17T21:14:31.765Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/8c/cda437c3c1dd892c7c3261720f5a0523b7ac89b6eafd88d23f6f2f174683/constriction-0.5.0-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:4711de9a5cea657ca70c60287257f866987dbce231d7f515d97977183fba050b", size = 381808, upload-time = "2026-07-17T21:14:33.134Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/3f/2a81ae9d61d53ae07462c23828e935725ce1ede1c91c4a26362a9a73dcae/constriction-0.5.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ceed4ee1f447901d6e35279af7289ae7a940d94e6eb9e6d21ed1e6713f3198a2", size = 379538, upload-time = "2026-07-17T21:14:34.446Z" },
+    { url = "https://files.pythonhosted.org/packages/30/50/936309b4f6b20dd43c65179e9ecce12a9a633aabf682236a41bd42ebc2f2/constriction-0.5.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6dd063fd16d135a65700b78fba166e653e60366fa318d5e14a74f76ca507922f", size = 410788, upload-time = "2026-07-17T21:11:46.441Z" },
+    { url = "https://files.pythonhosted.org/packages/70/1a/6c4ea3ba07c7e527409f983352708350789ad62ed17c216edfd2c61c3193/constriction-0.5.0-cp310-cp310-win_amd64.whl", hash = "sha256:618c88e0003b78c8016e0a93cfd829783c138c81ade22ab13e298c3b5fd8c75e", size = 306733, upload-time = "2026-07-17T21:41:53.482Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/1f/058d48a2e46e28e8c01f45139d547119c746be1fd3b84e2ebdbec0ecc37f/constriction-0.5.0-cp311-cp311-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:72ffe79afb94ac1f9d7f88b6cfc7c0212ea2105a0328cfc9a75bc1a9dbb19f55", size = 740499, upload-time = "2026-07-17T21:14:35.521Z" },
+    { url = "https://files.pythonhosted.org/packages/51/c6/5f52b17c37406f078074c6b6d17e69c56881bbcc823a51d5a59ac1cf3c43/constriction-0.5.0-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:a6c1e888c74cc46a30797ae532abc107d3c0f847c22d39400b9a82a8e868fccd", size = 381880, upload-time = "2026-07-17T21:14:36.638Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/57/3904fa7940b0e730526733d13bb8fb3f1e6f97b2cc5fd320cc14ee861261/constriction-0.5.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7c4394e3b5ba4d19dc82d4f3a74420384552ef3a6dc80e953839667c1de374fd", size = 379597, upload-time = "2026-07-17T21:14:37.581Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/62/1e5355b0a3975841181607a8a721c2fe9576ee4483c891e5903c0bca6cee/constriction-0.5.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:eb7909d0ad4940d3b74696d98f0dc16dec7294e57f9e0797bc06d5ce7b3b1507", size = 410375, upload-time = "2026-07-17T21:11:47.796Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/ac/057e3ece1cdec26e221e437d79e8e5474e2e26316e1eda8947785b5ee815/constriction-0.5.0-cp311-cp311-win_amd64.whl", hash = "sha256:5840d47681b850c1e0fcb1a0b31a5779edbc6f67352d45d511dbab51dbad42f6", size = 306781, upload-time = "2026-07-17T21:41:54.825Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/4f/f8b17efe27bbf50099849b2c469eeb319675cc756785780e5ce8bed626b0/constriction-0.5.0-cp312-cp312-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:180630e473fe9417ea5965c99a60f71c33e4554d8016ab80d5ed2a0853c9303a", size = 740610, upload-time = "2026-07-17T21:14:38.713Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/22/3cd340a047d24b0d3201d8cc8313c772d885e11edea1211f275c981bb584/constriction-0.5.0-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:7e8fa40ed400f461f1c2809d061a7d036d4e2631b525dc58fd70f92d938027c5", size = 387157, upload-time = "2026-07-17T21:14:39.924Z" },
+    { url = "https://files.pythonhosted.org/packages/90/ff/934d6b59fc6779b7ac57371fc7c2aa17042aa29d5aff4a4bcc5eb6a0cc84/constriction-0.5.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:5474c99c7ecbd9d64de975f08b5571303bc1cb9d2544cc70e6925dd3a7713be6", size = 375743, upload-time = "2026-07-17T21:14:40.907Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/2f/5b652525e6ae6e09c574a86b1e07cf50d9c2def834f49d55f5ddd7a4e4d6/constriction-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d74dbfb7f0d413862df31cb634759bd49ffa307f36948ed6ffa6c5f66ac9af0b", size = 405717, upload-time = "2026-07-17T21:11:48.86Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/3c/866fc7f84c0121c9d1b2aaec2b8572c7760d895f0884698d6dc725d7e72e/constriction-0.5.0-cp312-cp312-win_amd64.whl", hash = "sha256:f541190e373393c611b0049fffddc197274a66741e75172ff32eb481cc433939", size = 305549, upload-time = "2026-07-17T21:41:55.962Z" },
+]
+
+[[package]]
 name = "ctranslate2"
 version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -623,6 +648,7 @@ name = "local-ai-dictation"
 version = "1.2.1"
 source = { editable = "." }
 dependencies = [
+    { name = "constriction" },
     { name = "faster-whisper" },
     { name = "huggingface-hub" },
     { name = "kestrel" },
@@ -630,6 +656,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pyaudio" },
     { name = "pyperclip" },
+    { name = "safetensors" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "torch" },
     { name = "webrtcvad-wheels" },
@@ -650,6 +677,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "constriction", specifier = "==0.5.0" },
     { name = "faster-whisper" },
     { name = "huggingface-hub", specifier = ">=0.20" },
     { name = "kestrel", specifier = "==0.9.1" },
@@ -658,6 +686,7 @@ requires-dist = [
     { name = "pyaudio" },
     { name = "pyperclip" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+    { name = "safetensors", specifier = ">=0.7.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
     { name = "torch", specifier = ">=2.4" },
     { name = "webrtcvad-wheels" },

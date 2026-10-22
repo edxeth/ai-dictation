@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import importlib
+import json
 import os
+import shutil
 import tempfile
 import threading
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,11 +27,62 @@ from local_ai_dictation.types import (
 )
 
 MODEL_ID = "moondream/parakeet-ultra"
-_MODEL_CACHE_DIRNAME = "models--moondream--parakeet-ultra"
 _MODEL_FILES = ("config.json", "tokenizer.json", "model.safetensors")
+# Kestrel registers the Parakeet TDT 0.6B v3 architecture under NVIDIA's id; a
+# local checkpoint of that architecture (Bark) loads through it via model_path.
+_PARAKEET_V3_ID = "nvidia/parakeet-tdt-0.6b-v3"
+# The Bark weights reuse NVIDIA's tokenizer unchanged; Bark 3.0 does not ship
+# tokenizer.json, so it comes from the revision Kestrel itself pins.
+_PARAKEET_V3_REVISION = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+_DECODED_MODELS_DIRNAME = "local-ai-dictation/models"
 
 
-class ParakeetUltraEngine:
+@dataclass(frozen=True)
+class KestrelModelSpec:
+    """A checkpoint that the Kestrel Parakeet TDT runtime can load."""
+
+    runtime_model_id: str
+    repo_id: str
+    # Third-party repositories are pinned so new commits cannot change the
+    # weights under a release; Moondream's own repositories track main, as
+    # Kestrel does for them.
+    revision: str | None = None
+    files: tuple[str, ...] = _MODEL_FILES
+    # A packed weight file decoded once into a local checkpoint directory.
+    packed_file: str | None = None
+
+
+KESTREL_MODELS: dict[str, KestrelModelSpec] = {
+    "parakeet": KestrelModelSpec(MODEL_ID, MODEL_ID),
+    "parakeet-redux": KestrelModelSpec(
+        "moondream/parakeet-redux",
+        "moondream/parakeet-redux",
+        # Kestrel treats a checkpoint as ternary only when this manifest exists.
+        files=_MODEL_FILES + ("ternary.json",),
+    ),
+    "bark": KestrelModelSpec(
+        _PARAKEET_V3_ID,
+        "ConwayResearch/Underdog-Bark-3.0",
+        revision="85db2ad18ab41e534a222ee253c29191d77ed919",
+        files=("model.bark",),
+        packed_file="model.bark",
+    ),
+    "bark-pro": KestrelModelSpec(
+        _PARAKEET_V3_ID,
+        "ConwayResearch/Underdog-Bark-3.0-Pro",
+        revision="4b5c51e04aa8d16dda9ecdff71bc29f7360149e4",
+    ),
+}
+
+
+def kestrel_model_spec(backend: str) -> KestrelModelSpec:
+    try:
+        return KESTREL_MODELS[backend]
+    except KeyError:
+        raise ValueError(f"Backend does not run on Kestrel: {backend!r}") from None
+
+
+class ParakeetTdtEngine:
     def __init__(self, runtime: Any, *, device: str) -> None:
         self._runtime = runtime
         self._device = device
@@ -94,28 +149,56 @@ def _candidate_cache_roots(
 
 
 def _find_model_cache_dir(
+    spec: KestrelModelSpec,
     env: Mapping[str, str] | None = None,
     *,
     home: Path | None = None,
 ) -> Path | None:
+    dirname = "models--" + spec.repo_id.replace("/", "--")
     for root in _candidate_cache_roots(env, home=home):
-        candidate = root / _MODEL_CACHE_DIRNAME
+        candidate = root / dirname
         if candidate.exists():
             return candidate
     return None
 
 
-def _has_snapshot(cache_dir: Path) -> bool:
+def _has_files(directory: Path, names: Sequence[str]) -> bool:
+    return all((directory / name).is_file() for name in names)
+
+
+def _has_snapshot(cache_dir: Path, spec: KestrelModelSpec) -> bool:
     snapshots_dir = cache_dir / "snapshots"
     if not snapshots_dir.is_dir():
         return False
+    if spec.revision is not None:
+        return _has_files(snapshots_dir / spec.revision, spec.files)
     try:
-        return any(
-            all((child / name).is_file() for name in _MODEL_FILES)
-            for child in snapshots_dir.iterdir()
-        )
+        return any(_has_files(child, spec.files) for child in snapshots_dir.iterdir())
     except OSError:
         return False
+
+
+def _decoded_model_dir(
+    spec: KestrelModelSpec,
+    env: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    source = (
+        {} if env is None and home is not None else (os.environ if env is None else env)
+    )
+    xdg_cache_home = source.get("XDG_CACHE_HOME")
+    cache_root = (
+        Path(xdg_cache_home).expanduser()
+        if xdg_cache_home
+        else (Path.home() if home is None else home).expanduser() / ".cache"
+    )
+    return (
+        cache_root
+        / _DECODED_MODELS_DIRNAME
+        / spec.repo_id.replace("/", "--")
+        / str(spec.revision)
+    )
 
 
 def _check_import_readiness() -> tuple[bool, str | None]:
@@ -140,29 +223,88 @@ def _load_runtime_dependencies() -> tuple[Any, Any, Any]:
     return runtime_class, config_class, torch_module
 
 
-def _resolve_model_path() -> str:
+def _resolve_snapshot(spec: KestrelModelSpec) -> str:
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import LocalEntryNotFoundError
 
     try:
         cached = snapshot_download(
-            MODEL_ID, allow_patterns=list(_MODEL_FILES), local_files_only=True
+            spec.repo_id,
+            revision=spec.revision,
+            allow_patterns=list(spec.files),
+            local_files_only=True,
         )
     except LocalEntryNotFoundError:
         pass
     else:
-        if all((Path(cached) / name).is_file() for name in _MODEL_FILES):
+        if _has_files(Path(cached), spec.files):
             return cached
-    return snapshot_download(MODEL_ID, allow_patterns=list(_MODEL_FILES))
+    return snapshot_download(
+        spec.repo_id, revision=spec.revision, allow_patterns=list(spec.files)
+    )
+
+
+def _write_decoded_checkpoint(spec: KestrelModelSpec, staging: Path) -> None:
+    from huggingface_hub import hf_hub_download
+    from safetensors.numpy import save_file
+
+    from local_ai_dictation.bark_format import decode
+
+    packed = Path(_resolve_snapshot(spec)) / str(spec.packed_file)
+    tokenizer = hf_hub_download(
+        _PARAKEET_V3_ID, "tokenizer.json", revision=_PARAKEET_V3_REVISION
+    )
+    state, config = decode(packed.read_bytes())
+    save_file(state, str(staging / "model.safetensors"))
+    (staging / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    shutil.copyfile(tokenizer, staging / "tokenizer.json")
+
+
+def _resolve_decoded_checkpoint(spec: KestrelModelSpec) -> str:
+    # A complete checkpoint is never modified or removed, so it can be read
+    # without the lock. Builders hold a per-checkpoint lock across processes
+    # (bridge, benchmark, doctor) and decode at most once.
+    target = _decoded_model_dir(spec)
+    if _has_files(target, _MODEL_FILES):
+        return str(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target.parent / f".{target.name}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if _has_files(target, _MODEL_FILES):
+            return str(target)
+        staging = Path(tempfile.mkdtemp(prefix=".partial-", dir=target.parent))
+        try:
+            _write_decoded_checkpoint(spec, staging)
+            if target.exists():
+                # Left incomplete outside this protocol; nothing can use it.
+                shutil.rmtree(target)
+            os.replace(staging, target)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    return str(target)
+
+
+def _resolve_model_path(spec: KestrelModelSpec) -> str:
+    if spec.packed_file is not None:
+        return _resolve_decoded_checkpoint(spec)
+    return _resolve_snapshot(spec)
 
 
 def check_model_cache(
     env: Mapping[str, str] | None = None,
     *,
     home: Path | None = None,
+    backend: str = "parakeet",
 ) -> dict[str, Any]:
-    cache_dir = _find_model_cache_dir(env, home=home)
-    cache_present = bool(cache_dir and _has_snapshot(cache_dir))
+    spec = kestrel_model_spec(backend)
+    if spec.packed_file is not None:
+        decoded_dir = _decoded_model_dir(spec, env, home=home)
+        cache_present = _has_files(decoded_dir, _MODEL_FILES)
+        cache_dir = decoded_dir if decoded_dir.exists() else None
+    else:
+        cache_dir = _find_model_cache_dir(spec, env, home=home)
+        cache_present = bool(cache_dir and _has_snapshot(cache_dir, spec))
     import_ready, import_error = _check_import_readiness()
 
     if cache_present and import_ready:
@@ -178,14 +320,15 @@ def check_model_cache(
         "checked": True,
         "cache_present": cache_present,
         "cache_path": str(cache_dir) if cache_dir is not None else None,
-        "model_id": MODEL_ID,
+        "model_id": spec.repo_id,
         "import_ready": import_ready,
         "import_error": import_error,
         "detail": detail,
     }
 
 
-def load_engine(config: DictationConfig) -> ParakeetUltraEngine:
+def load_engine(config: DictationConfig) -> ParakeetTdtEngine:
+    spec = kestrel_model_spec(config.backend)
     runtime_class, config_class, torch_module = _load_runtime_dependencies()
     device = (
         "cpu"
@@ -199,14 +342,14 @@ def load_engine(config: DictationConfig) -> ParakeetUltraEngine:
         # those wrappers send machine and usage telemetry without an opt-out.
         runtime = runtime_class(
             config_class(
-                model=MODEL_ID,
-                model_path=_resolve_model_path(),
+                model=spec.runtime_model_id,
+                model_path=_resolve_model_path(spec),
                 device=device,
             )
         )
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
-    return ParakeetUltraEngine(runtime, device=device)
+    return ParakeetTdtEngine(runtime, device=device)
 
 
 def warmup(engine: TranscriptionEngine) -> None:

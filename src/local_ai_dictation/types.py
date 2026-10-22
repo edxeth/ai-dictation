@@ -7,7 +7,9 @@ from typing import Any, Literal, Protocol, Sequence
 
 SchemaVersion = Literal[1]
 TranscriptFormat = Literal["text", "json"]
-ModelBackend = Literal["parakeet", "whisper", "willow"]
+ModelBackend = Literal[
+    "parakeet", "parakeet-redux", "bark", "bark-pro", "whisper", "willow"
+]
 IssueSeverity = Literal["warn", "fail"]
 
 

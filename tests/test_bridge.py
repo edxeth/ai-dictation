@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -897,6 +899,31 @@ def test_bridge_does_not_apply_willow_deadline_to_whisper(monkeypatch):
     assert completed["state"] == "idle"
     assert completed["last_transcript"]["transcript"] == "local transcript"
     assert cancelled.is_set() is False
+    controller.shutdown()
+
+
+@pytest.mark.parametrize("backend", ["parakeet", "parakeet-redux", "bark", "bark-pro"])
+def test_bridge_warms_every_local_kestrel_model(monkeypatch, backend):
+    warmed = []
+    monkeypatch.setattr(
+        "local_ai_dictation.model.warmup", lambda model: warmed.append(model)
+    )
+    loaded = object()
+    controller = DictationBridgeController(
+        backend=backend,
+        runtime_loader=_runtime_loader,
+        model_loader=lambda *args, **kwargs: (loaded, False, 0.0, 0.0),
+        recorder=_recorder,
+        transcriber=_transcriber,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_model_warmup()
+    assert controller._warmup_thread is not None
+    controller._warmup_thread.join(timeout=2)
+
+    assert warmed == [loaded]
+    assert controller.get_session_payload()["model_loading"] is False
     controller.shutdown()
 
 
