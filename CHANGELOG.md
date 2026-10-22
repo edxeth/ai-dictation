@@ -2,11 +2,17 @@
 
 All notable changes to AI Dictation are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] - 2026-10-22
+
+### New Features
+
+- **Parakeet Redux, Bark 3.0, and Bark 3.0 Pro**: three more local speech models, including the most accurate English model the app has tested. See [Parakeet Redux, Bark 3.0, and Bark 3.0 Pro](https://github.com/edxeth/ai-dictation/blob/v1.3.0/README.md#parakeet-redux-bark-30-and-bark-30-pro).
+- **Waybar model menu**: right-click the Waybar module and pick any model from a Walker menu, with one switch instead of a cycle. See [Waybar configuration](https://github.com/edxeth/ai-dictation/blob/v1.3.0/README.md#waybar-configuration).
 
 ### Added
 
 #### Parakeet Redux, Bark 3.0, and Bark 3.0 Pro backends
+Refs: `f5bab3b`
 
 Added three local backends that run on the same Kestrel runtime as Parakeet Ultra: `parakeet-redux` (`moondream/parakeet-redux`, ternary weights, 25 languages), `bark` (`ConwayResearch/Underdog-Bark-3.0`, English), and `bark-pro` (`ConwayResearch/Underdog-Bark-3.0-Pro`, English). Select them with `local-ai-dictation backend set <key>`, `--backend <key>`, the config file, or `LOCAL_AI_DICTATION_BACKEND`. The GUI, Waybar widget, and model-switch notifications show their names.
 
@@ -15,6 +21,7 @@ Both Bark repositories are pinned to the tested commits. Bark 3.0 downloads a 16
 The backend cycle (`backend toggle` and the GUI switch control) now visits the new backends between Parakeet Ultra and Willow.
 
 #### Waybar model menu
+Refs: `f5bab3b`
 
 Added `integrations/hyprland/local-ai-dictation-model-menu.sh`. Bound to the Waybar module's right click, it opens a Walker menu of every backend with the current one marked. Picking a backend switches to it directly, with one bridge restart, so only the chosen model loads. Before this, reaching a backend meant cycling through, and loading, every backend in between.
 
@@ -157,6 +164,7 @@ Local models run a warmup inference before they accept recordings. Hyprland past
 - Fixed sessions under WSLg failing with a misleading PortAudio "no default output device" error. The bridge now retries with a concrete input device (`5bcb3cf`).
 - Fixed Linux capture losing the last words before stop, and recording cues playing twice (`b452ff0`).
 
+[1.3.0]: https://github.com/edxeth/ai-dictation/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/edxeth/ai-dictation/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/edxeth/ai-dictation/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/edxeth/ai-dictation/compare/v1.1.1...v1.1.2
