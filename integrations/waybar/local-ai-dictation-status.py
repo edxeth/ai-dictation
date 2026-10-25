@@ -108,12 +108,32 @@ def active_window_class() -> str:
     return str(payload.get("class") or "")
 
 
+def hyprland_uses_lua_config() -> bool:
+    # Hyprland 0.56 fixes the config manager per compositor start. Only the Lua
+    # manager (hyprland.lua) answers "ok" to eval; the legacy manager rejects it.
+    completed = subprocess.run(
+        ["hyprctl", "eval", "return 1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout.strip() == "ok"
+
+
 def send_paste_shortcut() -> None:
-    shortcut = "CTRL,V,activewindow"
-    if active_window_class() == "com.mitchellh.ghostty":
-        shortcut = "CTRL SHIFT,V,activewindow"
+    terminal = active_window_class() == "com.mitchellh.ghostty"
+    if hyprland_uses_lua_config():
+        # The Lua manager evaluates dispatch arguments as a Lua dispatcher and
+        # rejects legacy dispatcher syntax.
+        mods = "CTRL + SHIFT" if terminal else "CTRL"
+        dispatch = [
+            f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "V", window = "activewindow" }})'
+        ]
+    else:
+        mods = "CTRL SHIFT" if terminal else "CTRL"
+        dispatch = ["sendshortcut", f"{mods},V,activewindow"]
     subprocess.run(
-        ["hyprctl", "dispatch", "sendshortcut", shortcut],
+        ["hyprctl", "dispatch", *dispatch],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,

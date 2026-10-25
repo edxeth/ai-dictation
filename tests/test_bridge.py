@@ -1531,15 +1531,51 @@ def test_bridge_http_reports_willow_finish_failure(monkeypatch):
         thread.join(timeout=1)
 
 
-def test_hyprland_paste_notifier_uses_terminal_shortcut(monkeypatch):
+# Hyprland 0.56 answers `hyprctl eval 'return 1'` with "ok" under the Lua config
+# manager; the legacy manager rejects eval with this message.
+LEGACY_EVAL_REPLY = "eval is only supported with the lua config manager"
+
+
+@pytest.mark.parametrize(
+    ("eval_reply", "window_class", "dispatch"),
+    [
+        pytest.param(
+            "ok",
+            "com.mitchellh.ghostty",
+            [
+                'hl.dsp.send_shortcut({ mods = "CTRL + SHIFT", key = "V", window = "activewindow" })'
+            ],
+            id="lua-terminal",
+        ),
+        pytest.param(
+            "ok",
+            "chromium",
+            [
+                'hl.dsp.send_shortcut({ mods = "CTRL", key = "V", window = "activewindow" })'
+            ],
+            id="lua-app",
+        ),
+        pytest.param(
+            LEGACY_EVAL_REPLY,
+            "chromium",
+            ["sendshortcut", "CTRL,V,activewindow"],
+            id="legacy-app",
+        ),
+    ],
+)
+def test_hyprland_paste_notifier_sends_paste_in_the_active_config_dialect(
+    monkeypatch, eval_reply, window_class, dispatch
+):
     calls: list[list[str]] = []
 
     def run(command, **kwargs):
         calls.append(command)
-        if command[-1] == "activewindow":
+        if command[1:] == ["-j", "activewindow"]:
             return subprocess.CompletedProcess(
-                command, 0, stdout=json.dumps({"class": "com.mitchellh.ghostty"})
+                command, 0, stdout=json.dumps({"class": window_class})
             )
+        if command[1] == "eval":
+            return subprocess.CompletedProcess(command, 0, stdout=f"{eval_reply}\n")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(
@@ -1557,6 +1593,40 @@ def test_hyprland_paste_notifier_uses_terminal_shortcut(monkeypatch):
     assert notifier() is True
     assert calls == [
         ["/usr/bin/hyprctl", "-j", "activewindow"],
+        ["/usr/bin/hyprctl", "eval", "return 1"],
+        ["/usr/bin/hyprctl", "dispatch", *dispatch],
+    ]
+
+
+def test_hyprland_paste_notifier_uses_terminal_shortcut(monkeypatch):
+    calls: list[list[str]] = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[-1] == "activewindow":
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps({"class": "com.mitchellh.ghostty"})
+            )
+        if command[1] == "eval":
+            return subprocess.CompletedProcess(command, 1, stdout=LEGACY_EVAL_REPLY)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        bridge_module.shutil,
+        "which",
+        lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None,
+    )
+    monkeypatch.setattr(bridge_module.subprocess, "run", run)
+
+    notifier = bridge_module._build_hyprland_paste_notifier(
+        {"LOCAL_AI_DICTATION_HYPRLAND_PASTE": "1"}
+    )
+
+    assert notifier is not None
+    assert notifier() is True
+    assert calls == [
+        ["/usr/bin/hyprctl", "-j", "activewindow"],
+        ["/usr/bin/hyprctl", "eval", "return 1"],
         ["/usr/bin/hyprctl", "dispatch", "sendshortcut", "CTRL SHIFT,V,activewindow"],
     ]
 

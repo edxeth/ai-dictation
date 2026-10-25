@@ -2,6 +2,15 @@
 
 All notable changes to AI Dictation are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+#### Auto-paste works when Hyprland uses a Lua config
+Fixed auto-paste on Hyprland sessions that load `hyprland.lua`. The Lua config manager reads `hyprctl dispatch` arguments as Lua and rejected the bridge's `sendshortcut` command. The transcript reached the clipboard, but nothing was pasted into the focused app, and `paste_dispatched_at` stayed `null`.
+
+The bridge and the Waybar fallback paste now check the config manager with `hyprctl eval 'return 1'` before each paste. With a Lua config they send `hl.dsp.send_shortcut`. With a legacy config they send the same `sendshortcut` command as before. Ghostty still gets Ctrl+Shift+V. Restart the bridge and copy the updated Waybar script to apply the fix.
+
 ## [1.3.0] - 2026-10-22
 
 ### New Features

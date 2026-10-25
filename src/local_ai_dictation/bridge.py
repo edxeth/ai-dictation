@@ -72,6 +72,21 @@ _WILLOW_AUTH_REJECTION_MARKERS = (
 )
 
 
+def _hyprland_paste_command(hyprctl: str, *, terminal: bool, lua: bool) -> list[str]:
+    # Hyprland 0.56 fixes the config manager per compositor start. The Lua
+    # manager (hyprland.lua) evaluates `hyprctl dispatch` arguments as a Lua
+    # dispatcher and rejects legacy dispatcher syntax.
+    if lua:
+        mods = "CTRL + SHIFT" if terminal else "CTRL"
+        return [
+            hyprctl,
+            "dispatch",
+            f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "V", window = "activewindow" }})',
+        ]
+    mods = "CTRL SHIFT" if terminal else "CTRL"
+    return [hyprctl, "dispatch", "sendshortcut", f"{mods},V,activewindow"]
+
+
 def _build_hyprland_paste_notifier(env: Mapping[str, str]) -> Callable[[], bool] | None:
     enabled = str(env.get("LOCAL_AI_DICTATION_HYPRLAND_PASTE", "")).strip().lower()
     hyprctl = shutil.which("hyprctl")
@@ -95,13 +110,22 @@ def _build_hyprland_paste_notifier(env: Mapping[str, str]) -> Callable[[], bool]
             window_class = (
                 str(window.get("class") or "") if isinstance(window, dict) else ""
             )
-            shortcut = (
-                "CTRL SHIFT,V,activewindow"
-                if window_class == "com.mitchellh.ghostty"
-                else "CTRL,V,activewindow"
+            # Only the Lua manager answers "ok" to eval; the legacy manager
+            # rejects eval with an error message.
+            manager_probe = subprocess.run(
+                [hyprctl, "eval", "return 1"],
+                capture_output=True,
+                text=True,
+                timeout=HYPRCTL_TIMEOUT_SECONDS,
+                check=False,
             )
+            lua = manager_probe.stdout.strip() == "ok"
             dispatched = subprocess.run(
-                [hyprctl, "dispatch", "sendshortcut", shortcut],
+                _hyprland_paste_command(
+                    hyprctl,
+                    terminal=window_class == "com.mitchellh.ghostty",
+                    lua=lua,
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=HYPRCTL_TIMEOUT_SECONDS,

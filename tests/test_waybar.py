@@ -18,7 +18,9 @@ SWITCH_SCRIPT = ROOT / "integrations/hyprland/local-ai-dictation-switch-model.sh
 MENU_SCRIPT = ROOT / "integrations/hyprland/local-ai-dictation-model-menu.sh"
 
 
-def _run_status(tmp_path: Path, payload, preferred: str) -> dict:
+def _run_status(
+    tmp_path: Path, payload, preferred: str, extra_env: dict[str, str] | None = None
+) -> dict:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
@@ -43,6 +45,7 @@ def _run_status(tmp_path: Path, payload, preferred: str) -> dict:
                 **os.environ,
                 "XDG_STATE_HOME": str(state_home),
                 "LOCAL_AI_DICTATION_BRIDGE_URL": f"http://127.0.0.1:{server.server_port}",
+                **(extra_env or {}),
             },
             capture_output=True,
             text=True,
@@ -54,6 +57,85 @@ def _run_status(tmp_path: Path, payload, preferred: str) -> dict:
         server.server_close()
         thread.join(timeout=1)
     return json.loads(result.stdout)
+
+
+# Hyprland 0.56 answers `hyprctl eval 'return 1'` with "ok" under the Lua config
+# manager; the legacy manager rejects eval with this message.
+LEGACY_EVAL_REPLY = "eval is only supported with the lua config manager"
+
+
+@pytest.mark.parametrize(
+    ("eval_reply", "window_class", "dispatch"),
+    [
+        pytest.param(
+            "ok",
+            "chromium",
+            [
+                "dispatch",
+                'hl.dsp.send_shortcut({ mods = "CTRL", key = "V", window = "activewindow" })',
+            ],
+            id="lua-app",
+        ),
+        pytest.param(
+            LEGACY_EVAL_REPLY,
+            "com.mitchellh.ghostty",
+            ["dispatch", "sendshortcut", "CTRL SHIFT,V,activewindow"],
+            id="legacy-terminal",
+        ),
+    ],
+)
+def test_waybar_pastes_a_new_transcript_in_the_active_config_dialect(
+    tmp_path, eval_reply, window_class, dispatch
+):
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    hyprctl = commands / "hyprctl"
+    hyprctl.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "args = sys.argv[1:]\n"
+        "with open(os.environ['STUB_LOG'], 'a') as log:\n"
+        "    log.write(json.dumps(args) + '\\n')\n"
+        "if args[:1] == ['eval']:\n"
+        "    print(os.environ['STUB_EVAL_REPLY'])\n"
+        "elif args == ['-j', 'activewindow']:\n"
+        "    print(json.dumps({'class': os.environ['STUB_WINDOW_CLASS']}))\n"
+        "else:\n"
+        "    print('ok')\n",
+        encoding="utf-8",
+    )
+    hyprctl.chmod(0o755)
+    calls_log = tmp_path / "hyprctl.calls"
+    # A previous completion is on record, so the new one is a fresh transcript.
+    last_completed = tmp_path / "state/local-ai-dictation-waybar/last-completed-at"
+    last_completed.parent.mkdir(parents=True)
+    last_completed.write_text("100.0", encoding="utf-8")
+    payload = {
+        "bridge": {"model_loaded": True},
+        "session": {
+            "state": "idle",
+            "config": {"backend": "whisper"},
+            "last_completed_at": 200.0,
+            "paste_dispatched_at": None,
+            "last_transcript": {"transcript": "hello world"},
+        },
+    }
+
+    _run_status(
+        tmp_path,
+        payload,
+        "whisper",
+        extra_env={
+            "PATH": f"{commands}:{os.environ['PATH']}",
+            "STUB_LOG": str(calls_log),
+            "STUB_EVAL_REPLY": eval_reply,
+            "STUB_WINDOW_CLASS": window_class,
+        },
+    )
+
+    calls = [json.loads(line) for line in calls_log.read_text().splitlines()]
+    assert [call for call in calls if call[0] == "dispatch"] == [dispatch]
+    assert last_completed.read_text(encoding="utf-8") == "200.0"
 
 
 @pytest.mark.parametrize("backend", list(BACKEND_LABELS))
