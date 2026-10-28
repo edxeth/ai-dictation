@@ -7,6 +7,7 @@ selects Frontier Mini or Frontier Pro server-side according to the account plan.
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -18,9 +19,10 @@ import threading
 import time
 import wave
 import webbrowser
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -142,12 +144,39 @@ def _find_session(value: Any) -> WillowSession | None:
     return None
 
 
+# Several processes can share one session file (the bridge, a CLI run, another
+# client), each with the refresh token in memory. Willow rotates refresh tokens and
+# revokes the whole login when one is used twice, so every write of a session file
+# (login, import, migration, refresh) holds this lock across processes.
+@contextmanager
+def _session_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(_session_lock_path(path), os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(descriptor, "r+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _session_lock_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.lock")
+
+
 def _write_owned_session(session: WillowSession, path: Path) -> None:
+    _require_refresh_token(session)
+    with _session_lock(path):
+        _write_owned_session_locked(session, path)
+
+
+def _require_refresh_token(session: WillowSession) -> None:
     if not session.refresh_token:
         raise ModelError(
             WILLOW_AUTH_REQUIRED,
             "Willow session does not contain a refresh token; run `local-ai-dictation willow-session login` to create a refreshable session",
         )
+
+
+# The caller holds _session_lock(path).
+def _write_owned_session_locked(session: WillowSession, path: Path) -> None:
     payload = {
         "access_token": session.access_token,
         "refresh_token": session.refresh_token,
@@ -350,7 +379,14 @@ def load_session(
             f"Willow session at {resolved_path} does not contain an access token; log in again with `local-ai-dictation willow-session login`",
         )
     if path is None and resolved_path == legacy_session_path(source):
-        _write_owned_session(found, session_path(source))
+        owned = session_path(source)
+        _require_refresh_token(found)
+        with _session_lock(owned):
+            # Another process can have migrated and refreshed since this one read
+            # the legacy file; its session is newer than this copy.
+            if owned.is_file() and not owned.is_symlink():
+                return _read_stored_session(owned)
+            _write_owned_session_locked(found, owned)
     return found
 
 
@@ -437,6 +473,27 @@ def _replace_stored_session(
         updated_mapping[key] = updated
         changed = changed or item_changed
     return updated_mapping, changed
+
+
+def _read_stored_session(path: Path) -> WillowSession:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ModelError(
+            WILLOW_AUTH_REQUIRED,
+            f"Willow session required. Run `local-ai-dictation willow-session login` or import a session. Session not found at {path}",
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelError(
+            MODEL_IMPORT_FAILED, f"Could not read Willow session at {path}: {exc}"
+        ) from exc
+    found = _find_session(payload)
+    if found is None:
+        raise ModelError(
+            WILLOW_AUTH_REQUIRED,
+            f"Willow session at {path} does not contain an access token; log in again with `local-ai-dictation willow-session login`",
+        )
+    return found
 
 
 def _persist_refreshed_session(
@@ -960,10 +1017,17 @@ class WillowEngine:
         ):
             self._send(socket, protocol, key, data)
 
-    def _ensure_fresh_session(self) -> None:
-        if self._expires_at is None or self._expires_at > time.time() + 60:
-            return
-        previous_token = self._access_token
+    @staticmethod
+    def _needs_refresh(expires_at: float | None) -> bool:
+        return expires_at is not None and expires_at <= time.time() + 60
+
+    def _adopt(self, session: WillowSession) -> None:
+        self._access_token = session.access_token
+        self._user_id = session.user_id or self._user_id
+        self._refresh_token = session.refresh_token
+        self._expires_at = session.expires_at
+
+    def _refresh_in_memory(self) -> WillowSession:
         refreshed = _refresh_session(
             WillowSession(
                 access_token=self._access_token,
@@ -972,11 +1036,26 @@ class WillowEngine:
                 expires_at=self._expires_at,
             )
         )
-        self._access_token = refreshed.access_token
-        self._user_id = refreshed.user_id or self._user_id
-        self._refresh_token = refreshed.refresh_token
-        self._expires_at = refreshed.expires_at
-        if self._session_file is not None:
+        self._adopt(refreshed)
+        return refreshed
+
+    def _ensure_fresh_session(self) -> None:
+        if not self._needs_refresh(self._expires_at):
+            return
+        if self._session_file is None:
+            self._refresh_in_memory()
+            return
+        # A refresh starts from the session saved last (see _session_lock): a
+        # process that finds a newer session there (another process refreshed, or
+        # a new login) adopts it instead of reusing its own refresh token.
+        with _session_lock(self._session_file):
+            stored = _read_stored_session(self._session_file)
+            if stored.access_token != self._access_token:
+                self._adopt(stored)
+                if not self._needs_refresh(self._expires_at):
+                    return
+            previous_token = self._access_token
+            refreshed = self._refresh_in_memory()
             _persist_refreshed_session(self._session_file, previous_token, refreshed)
 
     @staticmethod

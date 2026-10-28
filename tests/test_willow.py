@@ -981,3 +981,306 @@ def test_willow_engine_requires_a_session(monkeypatch):
 
     with pytest.raises(Exception, match="Willow session required"):
         WillowEngine.from_config(config, env={"HOME": "/path/that/does/not/exist"})
+
+
+class _RotatingTokens:
+    """Supabase's refresh rotation as Willow uses it: each refresh token works once,
+    and reusing one revokes the login ("Invalid Refresh Token: Already Used")."""
+
+    def __init__(self, first: str, delay: float = 0.0) -> None:
+        self.valid = {first}
+        self.used: list[str] = []
+        self.revoked = False
+        self.delay = delay
+        self._lock = threading.Lock()
+        self._count = 0
+
+    def refresh(self, session: WillowSession) -> WillowSession:
+        time.sleep(self.delay)
+        with self._lock:
+            self.used.append(session.refresh_token)
+            if self.revoked or session.refresh_token not in self.valid:
+                self.revoked = True
+                raise ModelError(
+                    "WILLOW_AUTH_REQUIRED", "Invalid Refresh Token: Already Used"
+                )
+            self.valid.discard(session.refresh_token)
+            self._count += 1
+            token = f"refresh-{self._count}"
+            self.valid.add(token)
+            return WillowSession(
+                access_token=f"access-{self._count}",
+                user_id="user-123",
+                refresh_token=token,
+                expires_at=4_000_000_000,
+            )
+
+
+def _shared_session(tmp_path: Path, **session) -> Path:
+    path = tmp_path / "local-ai-dictation" / "willow-session.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(session), encoding="utf-8")
+    return path
+
+
+def _engine_from(path: Path) -> WillowEngine:
+    stored = load_session(path=path, env={})
+    return WillowEngine(
+        access_token=stored.access_token,
+        user_id=stored.user_id,
+        refresh_token=stored.refresh_token,
+        expires_at=stored.expires_at,
+        session_file=path,
+    )
+
+
+def test_processes_sharing_a_session_refresh_it_once_and_keep_it_valid(
+    tmp_path: Path, monkeypatch
+):
+    # Several processes (the bridge, a CLI run, another client) can load one session
+    # file. Each holds the refresh token in memory; two refreshes with the same token
+    # revoke the login for all of them.
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    tokens = _RotatingTokens("refresh-0", delay=0.2)
+    monkeypatch.setattr(willow_module, "_refresh_session", tokens.refresh)
+    engines = [_engine_from(path) for _ in range(3)]
+    errors: list[BaseException] = []
+
+    def refresh(engine: WillowEngine) -> None:
+        try:
+            engine._ensure_fresh_session()
+        except BaseException as exc:  # noqa: BLE001 - reported by the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=refresh, args=(e,)) for e in engines]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert tokens.used == ["refresh-0"]
+    assert tokens.revoked is False
+    assert {e._access_token for e in engines} == {"access-1"}
+    assert {e._refresh_token for e in engines} == {"refresh-1"}
+    assert json.loads(path.read_text(encoding="utf-8"))["refresh_token"] == "refresh-1"
+
+
+def test_a_process_adopts_the_session_another_one_refreshed_meanwhile(
+    tmp_path: Path, monkeypatch
+):
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    tokens = _RotatingTokens("refresh-0")
+    monkeypatch.setattr(willow_module, "_refresh_session", tokens.refresh)
+    early, late = _engine_from(path), _engine_from(path)
+    early._ensure_fresh_session()
+
+    # late still holds refresh-0, which Supabase already rotated.
+    late._ensure_fresh_session()
+
+    assert tokens.used == ["refresh-0"]
+    assert (late._access_token, late._refresh_token) == ("access-1", "refresh-1")
+
+
+def test_a_process_refreshes_with_the_saved_token_when_that_one_expired_too(
+    tmp_path: Path, monkeypatch
+):
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    tokens = _RotatingTokens("refresh-0")
+    monkeypatch.setattr(willow_module, "_refresh_session", tokens.refresh)
+    stale = _engine_from(path)
+    _engine_from(path)._ensure_fresh_session()
+    # The session another process saved has expired as well by now.
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**saved, "expires_at": 1}), encoding="utf-8")
+
+    stale._ensure_fresh_session()
+
+    assert tokens.used == ["refresh-0", "refresh-1"]
+    assert tokens.revoked is False
+    assert json.loads(path.read_text(encoding="utf-8"))["refresh_token"] == "refresh-2"
+
+
+def test_a_new_login_reaches_a_running_process_at_its_next_refresh(
+    tmp_path: Path, monkeypatch
+):
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    tokens = _RotatingTokens("refresh-0")
+    monkeypatch.setattr(willow_module, "_refresh_session", tokens.refresh)
+    running = _engine_from(path)
+    willow_module._write_owned_session(
+        WillowSession(
+            access_token="login-access",
+            user_id="user-123",
+            refresh_token="login-refresh",
+            expires_at=4_000_000_000,
+        ),
+        path,
+    )
+
+    running._ensure_fresh_session()
+
+    assert tokens.used == []
+    assert (running._access_token, running._refresh_token) == (
+        "login-access",
+        "login-refresh",
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["refresh_token"] == "login-refresh"
+    )
+
+
+def test_the_refresh_lock_file_is_private(tmp_path: Path, monkeypatch):
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    monkeypatch.setattr(
+        willow_module, "_refresh_session", _RotatingTokens("refresh-0").refresh
+    )
+
+    _engine_from(path)._ensure_fresh_session()
+
+    lock = path.with_name(".willow-session.json.lock")
+    assert lock.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_late_migration_keeps_the_session_another_process_refreshed(
+    tmp_path: Path, monkeypatch
+):
+    # Two processes start on the legacy session before the owned file exists. The
+    # first migrates and refreshes; the second, which read the legacy file earlier,
+    # must not put the used refresh token back.
+    state = tmp_path / "state"
+    legacy = state / "willow-linux" / "supabase-session.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "sb-db-auth-token": json.dumps(
+                    {
+                        "access_token": "access-0",
+                        "refresh_token": "refresh-0",
+                        "expires_at": 1,
+                        "user": {"id": "user-123"},
+                    }
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {"XDG_STATE_HOME": str(state)}
+    tokens = _RotatingTokens("refresh-0")
+    monkeypatch.setattr(willow_module, "_refresh_session", tokens.refresh)
+    real_find = willow_module._find_session
+    late_read, go_on = threading.Event(), threading.Event()
+    late_thread: list[threading.Thread] = []
+
+    def find_then_wait(value):
+        found = real_find(value)
+        if threading.current_thread() in late_thread and not late_read.is_set():
+            late_read.set()
+            go_on.wait(5)
+        return found
+
+    monkeypatch.setattr(willow_module, "_find_session", find_then_wait)
+    engines: dict[str, WillowEngine] = {}
+    errors: list[BaseException] = []
+
+    def start_late() -> None:
+        try:
+            engines["late"] = WillowEngine.from_config(
+                DictationConfig(backend="willow"), env=env
+            )
+            engines["late"]._ensure_fresh_session()
+        except BaseException as exc:  # noqa: BLE001 - reported by the assertion
+            errors.append(exc)
+
+    thread = threading.Thread(target=start_late)
+    late_thread.append(thread)
+    thread.start()
+    assert late_read.wait(5)
+    early = WillowEngine.from_config(DictationConfig(backend="willow"), env=env)
+    early._ensure_fresh_session()
+    go_on.set()
+    thread.join(5)
+
+    assert errors == []
+    assert tokens.used == ["refresh-0"]
+    assert engines["late"]._refresh_token == "refresh-1"
+    owned = state / "local-ai-dictation" / "willow-session.json"
+    assert json.loads(owned.read_text(encoding="utf-8"))["refresh_token"] == "refresh-1"
+
+
+def test_a_login_saved_during_a_refresh_is_kept(tmp_path: Path, monkeypatch):
+    path = _shared_session(
+        tmp_path,
+        access_token="access-0",
+        refresh_token="refresh-0",
+        expires_at=1,
+        user_id="user-123",
+    )
+    monkeypatch.setattr(
+        willow_module, "_refresh_session", _RotatingTokens("refresh-0").refresh
+    )
+    real_replace = willow_module._replace_stored_session
+    persisting, go_on = threading.Event(), threading.Event()
+
+    # Pause the refresh after it read the saved session and before it writes back.
+    def replace_then_wait(value, old_access_token, refreshed):
+        persisting.set()
+        go_on.wait(5)
+        return real_replace(value, old_access_token, refreshed)
+
+    monkeypatch.setattr(willow_module, "_replace_stored_session", replace_then_wait)
+    refresher = threading.Thread(target=_engine_from(path)._ensure_fresh_session)
+    refresher.start()
+    assert persisting.wait(5)
+    login = threading.Thread(
+        target=willow_module._write_owned_session,
+        args=(
+            WillowSession(
+                access_token="login-access",
+                user_id="user-123",
+                refresh_token="login-refresh",
+                expires_at=4_000_000_000,
+            ),
+            path,
+        ),
+    )
+    login.start()
+    login.join(0.3)
+    go_on.set()
+    refresher.join(5)
+    login.join(5)
+
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["access_token"] == "login-access"
+    )
