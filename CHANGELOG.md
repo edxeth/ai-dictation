@@ -2,14 +2,18 @@
 
 All notable changes to AI Dictation are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] - 2026-11-07
 
 ### Changed
 
 #### The Waybar model menu works with any dmenu-style picker
+Refs: `a6c0d91`
+
 The right-click model menu no longer requires Walker. It opens the first picker it finds of `vicinae`, `walker`, `fuzzel`, `rofi`, and `wofi`. Set `LOCAL_AI_DICTATION_MENU_CMD` to run any other picker command instead. `LOCAL_AI_DICTATION_WALKER_THEME` still applies when the menu opens Walker. When no picker is found, the menu shows a notification instead of doing nothing. Copy the updated `integrations/hyprland/local-ai-dictation-model-menu.sh` to apply the change.
 
 #### Parakeet Ultra runs faster without CUDA
+Refs: `864473f`
+
 Without CUDA (no NVIDIA driver loaded, CUDA unavailable, or `--cpu`), Parakeet Ultra now runs on transcribe.cpp, the runtime that Hex uses, instead of on Kestrel's CPU path. If the Mesa Radeon Vulkan driver (`vulkan-radeon`) is installed and exposes a usable Radeon GPU, it runs there. Otherwise it runs on eight CPU threads. On a Ryzen 7 5800H laptop, the median for short clips fell from 1.0 s to 0.26 s on the Radeon GPU and to 0.34 s on the CPU. The CPU path (F16 weights) had the same word error rate as Kestrel; the Radeon path (Q8_0 weights) differed from Kestrel by one word in each of two long clips. This path never loads the NVIDIA driver. With CUDA, Ultra still runs on Kestrel. Parakeet Redux and Bark still use Kestrel's CPU path.
 
 Reinstall the dependencies to get the new `transcribe-cpp` package. The first run without CUDA downloads `parakeet-ultra-Q8_0.gguf` (740 MB, Radeon) or `parakeet-ultra-F16.gguf` (1.26 GB, CPU) from `handy-computer/parakeet-ultra-gguf`. `doctor --backend parakeet --check-model-cache` reports this path as `cpu fallback`. Without CUDA, doctor now fails when that file or package is missing, and no longer fails over a missing Kestrel Ultra cache.
@@ -17,9 +21,18 @@ Reinstall the dependencies to get the new `transcribe-cpp` package. The first ru
 ### Fixed
 
 #### Auto-paste works when Hyprland uses a Lua config
+Refs: `d7aa806`
+
 Fixed auto-paste on Hyprland sessions that load `hyprland.lua`. The Lua config manager reads `hyprctl dispatch` arguments as Lua and rejected the bridge's `sendshortcut` command. The transcript reached the clipboard, but nothing was pasted into the focused app, and `paste_dispatched_at` stayed `null`.
 
 The bridge and the Waybar fallback paste now check the config manager with `hyprctl eval 'return 1'` before each paste. With a Lua config they send `hl.dsp.send_shortcut`. With a legacy config they send the same `sendshortcut` command as before. Ghostty still gets Ctrl+Shift+V. Restart the bridge and copy the updated Waybar script to apply the fix.
+
+#### Processes that share a Willow session no longer revoke the login
+Refs: `946e24d`
+
+Fixed Willow logins that could be revoked when two processes, such as the bridge and a dictation run or the GUI, used the same session file. Willow accepts each refresh token only once and revokes the whole login when a token is used again. Each process kept its own copy of the token, so two refreshes of one session could both use it. After that, Willow requests failed with `WILLOW_AUTH_REQUIRED` until you ran `local-ai-dictation willow-session login` again.
+
+A process now locks the session file before it logs in, imports, migrates, or refreshes a session. Before a refresh, it reads the saved session again. If another process refreshed or a new login was saved, the process uses that session and refreshes only if it is also close to expiry. A new login therefore reaches a running bridge at its next refresh. Sessions given through `WILLOW_ACCESS_TOKEN` still refresh in memory only.
 
 ## [1.3.0] - 2026-10-22
 
@@ -183,6 +196,7 @@ Local models run a warmup inference before they accept recordings. Hyprland past
 - Fixed sessions under WSLg failing with a misleading PortAudio "no default output device" error. The bridge now retries with a concrete input device (`5bcb3cf`).
 - Fixed Linux capture losing the last words before stop, and recording cues playing twice (`b452ff0`).
 
+[1.4.0]: https://github.com/edxeth/ai-dictation/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/edxeth/ai-dictation/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/edxeth/ai-dictation/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/edxeth/ai-dictation/compare/v1.1.2...v1.2.0
