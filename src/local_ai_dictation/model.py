@@ -327,7 +327,7 @@ def check_model_cache(
     }
 
 
-def load_engine(config: DictationConfig) -> ParakeetTdtEngine:
+def load_engine(config: DictationConfig) -> TranscriptionEngine:
     spec = kestrel_model_spec(config.backend)
     runtime_class, config_class, torch_module = _load_runtime_dependencies()
     device = (
@@ -337,6 +337,12 @@ def load_engine(config: DictationConfig) -> ParakeetTdtEngine:
         or not torch_module.cuda.is_available()
         else "cuda"
     )
+    if device == "cpu" and config.backend == "parakeet":
+        # Ultra runs several times faster off CUDA on transcribe.cpp (see
+        # gguf.py). It has no build of Redux or Bark, which stay on Kestrel.
+        from local_ai_dictation import gguf
+
+        return gguf.load_engine()
     try:
         # Use Kestrel's exported runtime, not PhotonClient/InferenceEngine:
         # those wrappers send machine and usage telemetry without an opt-out.

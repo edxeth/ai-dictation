@@ -9,6 +9,11 @@ All notable changes to AI Dictation are recorded here. Versions follow [Semantic
 #### The Waybar model menu works with any dmenu-style picker
 The right-click model menu no longer requires Walker. It opens the first picker it finds of `vicinae`, `walker`, `fuzzel`, `rofi`, and `wofi`. Set `LOCAL_AI_DICTATION_MENU_CMD` to run any other picker command instead. `LOCAL_AI_DICTATION_WALKER_THEME` still applies when the menu opens Walker. When no picker is found, the menu shows a notification instead of doing nothing. Copy the updated `integrations/hyprland/local-ai-dictation-model-menu.sh` to apply the change.
 
+#### Parakeet Ultra runs faster without CUDA
+Without CUDA (no NVIDIA driver loaded, CUDA unavailable, or `--cpu`), Parakeet Ultra now runs on transcribe.cpp, the runtime that Hex uses, instead of on Kestrel's CPU path. If the Mesa Radeon Vulkan driver (`vulkan-radeon`) is installed and exposes a usable Radeon GPU, it runs there. Otherwise it runs on eight CPU threads. On a Ryzen 7 5800H laptop, the median for short clips fell from 1.0 s to 0.26 s on the Radeon GPU and to 0.34 s on the CPU. The CPU path (F16 weights) had the same word error rate as Kestrel; the Radeon path (Q8_0 weights) differed from Kestrel by one word in each of two long clips. This path never loads the NVIDIA driver. With CUDA, Ultra still runs on Kestrel. Parakeet Redux and Bark still use Kestrel's CPU path.
+
+Reinstall the dependencies to get the new `transcribe-cpp` package. The first run without CUDA downloads `parakeet-ultra-Q8_0.gguf` (740 MB, Radeon) or `parakeet-ultra-F16.gguf` (1.26 GB, CPU) from `handy-computer/parakeet-ultra-gguf`. `doctor --backend parakeet --check-model-cache` reports this path as `cpu fallback`. Without CUDA, doctor now fails when that file or package is missing, and no longer fails over a missing Kestrel Ultra cache.
+
 ### Fixed
 
 #### Auto-paste works when Hyprland uses a Lua config

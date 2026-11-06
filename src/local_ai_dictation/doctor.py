@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from local_ai_dictation import gguf
 from local_ai_dictation.audio import list_input_devices, probe_audio_backend
 from local_ai_dictation.backend_state import get_backend
 from local_ai_dictation.errors import (
@@ -169,7 +170,11 @@ def _collect_model_status(
             "backend": backend,
         }
 
-    return {**selected_check(), "backend": backend}
+    status = {**selected_check(), "backend": backend}
+    if backend == "parakeet":
+        # Without CUDA, Ultra runs on transcribe.cpp instead of Kestrel.
+        status["cpu_fallback"] = gguf.check_model_cache()
+    return status
 
 
 def _build_issues(
@@ -248,7 +253,34 @@ def _build_issues(
             )
         )
 
-    if model.get("checked") and model.get("cache_present") is False:
+    fallback = model.get("cpu_fallback")
+    # Without CUDA, Ultra loads only the GGUF file; Kestrel's weights go unused.
+    ultra_on_fallback = fallback is not None and not bool(cuda.get("available"))
+    if ultra_on_fallback:
+        if not fallback["import_ready"]:
+            issues.append(
+                DoctorIssue(
+                    code=MODEL_IMPORT_FAILED,
+                    severity="fail",
+                    message="Without CUDA, Parakeet Ultra runs on transcribe.cpp, but the transcribe-cpp package is not installed.",
+                    remediation="Install the project dependencies again (transcribe-cpp is in pyproject.toml).",
+                )
+            )
+        if not fallback["cache_present"]:
+            issues.append(
+                DoctorIssue(
+                    code=MODEL_CACHE_MISSING,
+                    severity="fail",
+                    message=f"Without CUDA, Parakeet Ultra runs on transcribe.cpp, but {fallback['model_id']}/{fallback['file']} is not cached.",
+                    remediation=f"Download it with: hf download {fallback['model_id']} {fallback['file']} --revision {fallback['revision']}",
+                )
+            )
+
+    if (
+        model.get("checked")
+        and model.get("cache_present") is False
+        and not ultra_on_fallback
+    ):
         detail = (
             model.get("cache_path") or model.get("detail") or "Model cache is missing"
         )
@@ -341,6 +373,13 @@ def render_doctor_text(report: DoctorReport) -> str:
             else f"model: checked cache_present={report.model.get('cache_present')} import_ready={report.model.get('import_ready')}"
         ),
     ]
+    fallback = report.model.get("cpu_fallback")
+    if fallback is not None:
+        lines.append(
+            f"cpu fallback: {fallback['runtime']} on {fallback['device']} "
+            f"file={fallback['file']} cache_present={fallback['cache_present']} "
+            f"import_ready={fallback['import_ready']}"
+        )
 
     issues = report.status.get("issues", [])
     if issues:

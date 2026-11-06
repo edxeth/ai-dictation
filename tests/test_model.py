@@ -90,6 +90,11 @@ def test_check_model_cache_reports_missing_cache_and_import_failure(
     }
 
 
+# Ultra runs on Kestrel only with CUDA; off CUDA it runs on transcribe.cpp
+# (tests/test_gguf.py, tests/test_gpu.py).
+_CUDA_TORCH = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+
+
 def test_ultra_load_uses_direct_runtime_and_cached_checkpoint(monkeypatch):
     configurations = []
     runtime = SimpleNamespace(forward=lambda task, inputs: [{"text": "Hello, world!"}])
@@ -98,29 +103,30 @@ def test_ultra_load_uses_direct_runtime_and_cached_checkpoint(monkeypatch):
         configurations.append(config)
         return runtime
 
+    monkeypatch.setattr(model_module, "nvidia_driver_loaded", lambda: True)
     monkeypatch.setattr(
         model_module,
         "_load_runtime_dependencies",
         lambda: (
             build_runtime,
             SimpleNamespace,
-            SimpleNamespace(),
+            _CUDA_TORCH,
         ),
     )
     monkeypatch.setattr(
         model_module, "_resolve_model_path", lambda spec: "/cached/ultra"
     )
 
-    engine = model_module.load_engine(DictationConfig(backend="parakeet", cpu=True))
+    engine = model_module.load_engine(DictationConfig(backend="parakeet"))
 
     assert MODEL_ID == "moondream/parakeet-ultra"
     assert vars(configurations[0]) == {
         "model": "moondream/parakeet-ultra",
         "model_path": "/cached/ultra",
-        "device": "cpu",
+        "device": "cuda",
     }
     assert model_module.transcribe_wav(engine, "speech.wav").text == "Hello, world!"
-    assert engine._device == "cpu"
+    assert engine._device == "cuda"
 
 
 def test_every_kestrel_backend_has_a_model_spec():
@@ -283,17 +289,18 @@ def test_ultra_runtime_load_errors_keep_the_model_error_contract(monkeypatch):
     def fail(config):
         raise RuntimeError("weights cannot be loaded")
 
+    monkeypatch.setattr(model_module, "nvidia_driver_loaded", lambda: True)
     monkeypatch.setattr(
         model_module,
         "_load_runtime_dependencies",
-        lambda: (fail, SimpleNamespace, object()),
+        lambda: (fail, SimpleNamespace, _CUDA_TORCH),
     )
     monkeypatch.setattr(
         model_module, "_resolve_model_path", lambda spec: "/cached/ultra"
     )
 
     with pytest.raises(ModelError, match="weights cannot be loaded") as error:
-        model_module.load_engine(DictationConfig(backend="parakeet", cpu=True))
+        model_module.load_engine(DictationConfig(backend="parakeet"))
     assert error.value.code == MODEL_IMPORT_FAILED
 
 
@@ -445,17 +452,18 @@ def test_dictation_and_bridge_batch_path_load_and_transcribe_with_the_ultra_adap
         configurations.append(config)
         return SimpleNamespace(forward=forward)
 
+    monkeypatch.setattr(model_module, "nvidia_driver_loaded", lambda: True)
     monkeypatch.setattr(
         model_module,
         "_load_runtime_dependencies",
-        lambda: (build_runtime, SimpleNamespace, object()),
+        lambda: (build_runtime, SimpleNamespace, _CUDA_TORCH),
     )
     monkeypatch.setattr(
         model_module, "_resolve_model_path", lambda spec: "/cached/ultra"
     )
     monkeypatch.setattr(dictation, "spinner_animation", lambda *args, **kwargs: None)
     monkeypatch.setattr(dictation, "has_probable_speech", lambda *args, **kwargs: True)
-    config = DictationConfig(backend="parakeet", cpu=True, debug=True)
+    config = DictationConfig(backend="parakeet", debug=True)
     engine, use_cuda, _, _ = dictation._load_model(
         config, model_module, object(), status_stream=io.StringIO()
     )
@@ -470,7 +478,7 @@ def test_dictation_and_bridge_batch_path_load_and_transcribe_with_the_ultra_adap
     try:
         assert result.text == "A complete sentence."
         assert result.metadata == {"backend": "parakeet"}
-        assert use_cuda is False
+        assert use_cuda is True
         assert configurations[0].model == "moondream/parakeet-ultra"
         assert observed_audio == [(16000, 1, 2)]
     finally:

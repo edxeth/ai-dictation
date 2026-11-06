@@ -1,5 +1,6 @@
 # Core runtime (install PyTorch separately per README)
 kestrel==0.9.1
+transcribe-cpp==0.4.1
 huggingface-hub>=0.20
 torch>=2.4
 faster-whisper

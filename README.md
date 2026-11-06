@@ -55,10 +55,26 @@ local-ai-dictation benchmark --backend willow --fixture recording.wav --runs 1 -
 
 ### Parakeet Ultra
 
-- Model: `moondream/parakeet-ultra`, with CUDA acceleration and CPU fallback
-- Uses the direct Parakeet Ultra runtime from `kestrel==0.9.1`, not the Photon client
-  or inference-engine wrapper. Those wrappers send machine and usage telemetry;
-  this integration does not create them.
+- Model: `moondream/parakeet-ultra`, with CUDA acceleration and a fallback
+  that does not use the NVIDIA GPU
+- With CUDA, it uses the direct Parakeet Ultra runtime from `kestrel==0.9.1`,
+  not the Photon client or inference-engine wrapper. Those wrappers send machine
+  and usage telemetry; this integration does not create them.
+- Without CUDA (no NVIDIA driver loaded, CUDA unavailable, or `--cpu`), it runs
+  on `transcribe-cpp`, the runtime that Hex uses, with Moondream's weights
+  converted to GGUF (`handy-computer/parakeet-ultra-gguf`, pinned):
+  - If the Mesa Radeon Vulkan driver is installed
+    (`/usr/share/vulkan/icd.d/radeon_icd.json`, Arch package `vulkan-radeon`),
+    it runs the Q8_0 file (740 MB) on the Radeon GPU through Vulkan.
+  - Otherwise it runs the F16 file (1.26 GB) on eight CPU threads.
+  - It allows only that Vulkan driver, or only the CPU, so it never loads the
+    NVIDIA driver.
+  - On a Ryzen 7 5800H laptop it was 3 to 15 times faster than Kestrel on the
+    CPU. The F16 file had the same word error rate as Kestrel; the Q8_0 file
+    differed by one word in each of two long clips. On CUDA, Kestrel is about 4
+    times faster, so CUDA keeps Kestrel.
+  - `doctor --backend parakeet --check-model-cache` shows this fallback as
+    `cpu fallback`, with its device and whether its file is cached.
 - Downloads weights from Hugging Face on first use. A complete cached model
   loads without network access. No Moondream account or API key is required.
 - The persistent bridge performs a real inference warmup. Transcription remains

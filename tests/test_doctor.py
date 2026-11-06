@@ -228,8 +228,28 @@ def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_rec
     assert doctor_exit_code(report) == 3
 
 
+_GGUF_READY = {
+    "runtime": "transcribe.cpp",
+    "device": "igpu",
+    "model_id": "handy-computer/parakeet-ultra-gguf",
+    "revision": "a1539be1b849ea7463b88343e5277b373d0c4ea9",
+    "file": "parakeet-ultra-Q8_0.gguf",
+    "cache_present": True,
+    "cache_path": "/tmp/parakeet-ultra-Q8_0.gguf",
+    "import_ready": True,
+}
+
+
+def _stub_cpu_fallback(monkeypatch, **overrides):
+    monkeypatch.setattr(
+        "local_ai_dictation.gguf.check_model_cache",
+        lambda: {**_GGUF_READY, **overrides},
+    )
+
+
 def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
     _stub_ready_runtime(monkeypatch)
+    _stub_cpu_fallback(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
         lambda *, backend: {
@@ -254,10 +274,75 @@ def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
         "import_error": None,
         "detail": "Local cache and model imports look ready",
         "backend": "parakeet",
+        "cpu_fallback": _GGUF_READY,
     }
     assert report.status["overall"] == "ok"
     assert report.status["exit_code"] == 0
     assert report.status["issues"] == []
+
+
+def _stub_kestrel_cache_ready(monkeypatch):
+    monkeypatch.setattr(
+        "local_ai_dictation.doctor.check_model_cache",
+        lambda *, backend: {
+            "checked": True,
+            "cache_present": True,
+            "model_id": MODEL_ID,
+            "import_ready": True,
+        },
+    )
+
+
+def _stub_cuda_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "local_ai_dictation.doctor._collect_cuda_status",
+        lambda: {
+            "available": False,
+            "selected_device": "cpu",
+            "device_name": None,
+            "detail": "CUDA runtime is unavailable",
+        },
+    )
+
+
+def test_missing_cpu_fallback_file_does_not_matter_while_cuda_runs_ultra(monkeypatch):
+    _stub_ready_runtime(monkeypatch)
+    _stub_kestrel_cache_ready(monkeypatch)
+    _stub_cpu_fallback(monkeypatch, cache_present=False, cache_path=None)
+
+    report = collect_doctor_report(check_model_cache=True)
+
+    assert report.model["cpu_fallback"]["cache_present"] is False
+    assert report.status["issues"] == []
+
+
+def test_missing_cpu_fallback_file_fails_when_ultra_must_run_without_cuda(
+    monkeypatch,
+):
+    _stub_ready_runtime(monkeypatch)
+    _stub_cuda_unavailable(monkeypatch)
+    _stub_kestrel_cache_ready(monkeypatch)
+    _stub_cpu_fallback(monkeypatch, cache_present=False, cache_path=None)
+
+    report = collect_doctor_report(check_model_cache=True)
+    issues = {issue["code"]: issue for issue in report.status["issues"]}
+
+    assert report.status["overall"] == "fail"
+    assert set(issues) == {"CUDA_UNAVAILABLE", "MODEL_CACHE_MISSING"}
+    assert "parakeet-ultra-Q8_0.gguf" in issues["MODEL_CACHE_MISSING"]["message"]
+
+
+def test_missing_transcribe_cpp_fails_when_ultra_must_run_without_cuda(monkeypatch):
+    _stub_ready_runtime(monkeypatch)
+    _stub_cuda_unavailable(monkeypatch)
+    _stub_kestrel_cache_ready(monkeypatch)
+    _stub_cpu_fallback(monkeypatch, import_ready=False)
+
+    report = collect_doctor_report(check_model_cache=True)
+    issues = {issue["code"]: issue for issue in report.status["issues"]}
+
+    assert set(issues) == {"CUDA_UNAVAILABLE", "MODEL_IMPORT_FAILED"}
+    assert "transcribe-cpp" in issues["MODEL_IMPORT_FAILED"]["message"]
 
 
 def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_import_failures(
@@ -323,6 +408,7 @@ def test_doctor_command_emits_json_schema(monkeypatch, capsys):
 
 def test_doctor_command_emits_model_check_json(monkeypatch, capsys):
     _stub_ready_runtime(monkeypatch)
+    _stub_cpu_fallback(monkeypatch)
     monkeypatch.setattr(
         "local_ai_dictation.doctor.check_model_cache",
         lambda *, backend: {
@@ -349,9 +435,64 @@ def test_doctor_command_emits_model_check_json(monkeypatch, capsys):
         "import_error": None,
         "detail": "Local cache and model imports look ready",
         "backend": "parakeet",
+        "cpu_fallback": _GGUF_READY,
     }
     assert payload["status"] == {
         "overall": "ok",
         "exit_code": 0,
         "issues": [],
+    }
+
+
+def test_doctor_text_names_the_cpu_fallback_runtime_device_and_file(
+    monkeypatch, capsys
+):
+    _stub_ready_runtime(monkeypatch)
+    _stub_kestrel_cache_ready(monkeypatch)
+    _stub_cpu_fallback(monkeypatch, cache_present=False)
+
+    main(["doctor", "--check-model-cache"])
+
+    assert (
+        "cpu fallback: transcribe.cpp on igpu file=parakeet-ultra-Q8_0.gguf "
+        "cache_present=False import_ready=True"
+    ) in capsys.readouterr().out.splitlines()
+
+
+def _stub_kestrel_cache_missing(monkeypatch):
+    monkeypatch.setattr(
+        "local_ai_dictation.doctor.check_model_cache",
+        lambda *, backend: {
+            "checked": True,
+            "cache_present": False,
+            "cache_path": None,
+            "model_id": MODEL_ID,
+            "import_ready": True,
+        },
+    )
+
+
+def test_unused_kestrel_ultra_cache_does_not_fail_when_the_cpu_fallback_is_ready(
+    monkeypatch,
+):
+    _stub_ready_runtime(monkeypatch)
+    _stub_cuda_unavailable(monkeypatch)
+    _stub_kestrel_cache_missing(monkeypatch)
+    _stub_cpu_fallback(monkeypatch)
+
+    report = collect_doctor_report(check_model_cache=True)
+
+    assert {issue["code"] for issue in report.status["issues"]} == {"CUDA_UNAVAILABLE"}
+    assert report.status["overall"] == "warn"
+
+
+def test_missing_kestrel_ultra_cache_still_fails_while_cuda_runs_ultra(monkeypatch):
+    _stub_ready_runtime(monkeypatch)
+    _stub_kestrel_cache_missing(monkeypatch)
+    _stub_cpu_fallback(monkeypatch)
+
+    report = collect_doctor_report(check_model_cache=True)
+
+    assert {issue["code"] for issue in report.status["issues"]} == {
+        "MODEL_CACHE_MISSING"
     }

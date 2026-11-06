@@ -659,6 +659,7 @@ dependencies = [
     { name = "safetensors" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "torch" },
+    { name = "transcribe-cpp" },
     { name = "webrtcvad-wheels" },
     { name = "websockets" },
 ]
@@ -689,6 +690,7 @@ requires-dist = [
     { name = "safetensors", specifier = ">=0.7.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
     { name = "torch", specifier = ">=2.4" },
+    { name = "transcribe-cpp", specifier = "==0.4.1" },
     { name = "webrtcvad-wheels" },
     { name = "websockets", specifier = ">=15" },
 ]
@@ -1413,6 +1415,31 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
+name = "transcribe-cpp"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "transcribe-cpp-native" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/e7/9edc70afb5068db1222453cce6e95e9fb6e871e6e34fbd535a6cebeee379/transcribe_cpp-0.4.1.tar.gz", hash = "sha256:4ffc427f559d5271b91e43f02bc73d392541719a8f605348a7f6a434bc33ba5a", size = 118461, upload-time = "2026-10-22T14:07:36.156Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/60/df/55b97bec42c43f44a3d1bf1d4bbaf32b8bb1f99f444f4d49bfe6ca4224f4/transcribe_cpp-0.4.1-py3-none-any.whl", hash = "sha256:a4bb6ffb8eac16875daec12a8b3b9598024a34d1c10507cff51f0c42400eab5d", size = 47639, upload-time = "2026-10-22T14:07:21.328Z" },
+]
+
+[[package]]
+name = "transcribe-cpp-native"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/a3/051aebde5b8f6144f3b755b7e72a5676f2e16e04920ed1f8653df10efe28/transcribe_cpp_native-0.4.1.tar.gz", hash = "sha256:9cedd9319a87cb15036d24c48777e32e5e6b82b73ea021f57cc918c0ceac7f5c", size = 4543082, upload-time = "2026-10-22T14:07:37.563Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/bd/92e9e74cf4a59e118fd6b5c65c8f4f3b3c81b7c8030707a6a178764eea3c/transcribe_cpp_native-0.4.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:59fa4672e79cb5282b5d0c435506a22cd47bc6390a6bfee354ba46cae929a7c1", size = 2505988, upload-time = "2026-10-22T14:07:23.078Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/6b/98d884a92c57b722f8f720e996775425509a82db418a4157a941018f8d67/transcribe_cpp_native-0.4.1-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:06d8b7415724a96704630f2056f07d8dd7da4504adaa26edae2de9c97b261d72", size = 1631144, upload-time = "2026-10-22T14:07:24.881Z" },
+    { url = "https://files.pythonhosted.org/packages/85/26/f70a75ba3a7d6f950dc08e14a877bc811a4b54035d9e847b9ca629d09cde/transcribe_cpp_native-0.4.1-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:371e0fd638436123580401284c61610df847d094f5893f38339a6cccd1a16e51", size = 18349345, upload-time = "2026-10-22T14:07:26.767Z" },
+    { url = "https://files.pythonhosted.org/packages/89/90/745a4c6bf068a4aec400e32f81f6607475ca4dde8810f6c5c91534201cfa/transcribe_cpp_native-0.4.1-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:80011910fdc45adfeb78bf1a0e8813e9ad8be54b4f135b20e815388a11e78a50", size = 22805940, upload-time = "2026-10-22T14:07:31.161Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/d9/41cbb7195f0fbcf3fea8675da8e597b3b2fc5b553a754120823c62d2f54a/transcribe_cpp_native-0.4.1-py3-none-win_amd64.whl", hash = "sha256:ed0df2783c70c08eca406cbab5b79e2f0da3cac575cbc562b402b953fff508df", size = 18273433, upload-time = "2026-10-22T14:07:34.028Z" },
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ from local_ai_dictation.types import DictationConfig
 dictation_module = importlib.import_module("local_ai_dictation.dictation")
 doctor_module = importlib.import_module("local_ai_dictation.doctor")
 model_module = importlib.import_module("local_ai_dictation.model")
+gguf_module = importlib.import_module("local_ai_dictation.gguf")
 whisper_module = importlib.import_module("local_ai_dictation.whisper")
 
 
@@ -42,11 +43,19 @@ class _RecordingTorch:
 
 
 def _install_parakeet_runtime(monkeypatch, torch_module, *, driver_loaded=False):
-    runtime = SimpleNamespace(device=None)
+    # device: the Kestrel runtime's device, None when Kestrel was not built.
+    # gguf_loads: how often the transcribe.cpp CPU fallback was loaded.
+    runtime = SimpleNamespace(device=None, gguf_loads=0)
 
     def build_runtime(config):
         runtime.device = config.device
         return runtime
+
+    def load_gguf_engine():
+        runtime.gguf_loads += 1
+        return SimpleNamespace(_device="cpu")
+
+    monkeypatch.setattr(gguf_module, "load_engine", load_gguf_engine)
 
     monkeypatch.setattr(model_module, "nvidia_driver_loaded", lambda: driver_loaded)
     monkeypatch.setattr(
@@ -120,7 +129,8 @@ def test_model_load_uses_cpu_without_probing_cuda_when_nvidia_driver_is_absent(
         assert selected_device["device"] == "cpu"
         assert model._device == "cpu"
     else:
-        assert parakeet_model.device == "cpu"
+        assert parakeet_model.device is None
+        assert parakeet_model.gguf_loads == 1
 
 
 def test_loaded_nvidia_driver_allows_cuda_probe_and_gpu_model(monkeypatch):
@@ -143,6 +153,7 @@ def test_loaded_nvidia_driver_allows_cuda_probe_and_gpu_model(monkeypatch):
     assert torch_module.cuda.calls == 1
     assert use_cuda is True
     assert parakeet_model.device == "cuda"
+    assert parakeet_model.gguf_loads == 0
 
 
 def test_cpu_override_keeps_model_on_cpu_when_nvidia_driver_is_loaded(monkeypatch):
@@ -163,7 +174,8 @@ def test_cpu_override_keeps_model_on_cpu_when_nvidia_driver_is_loaded(monkeypatc
     )
 
     assert use_cuda is False
-    assert parakeet_model.device == "cpu"
+    assert parakeet_model.device is None
+    assert parakeet_model.gguf_loads == 1
     assert torch_module.cuda.calls == 0
 
 
@@ -174,16 +186,19 @@ def test_standalone_parakeet_loader_does_not_probe_cuda_without_nvidia_driver(
 
     model_module.load_engine(DictationConfig(backend="parakeet"))
 
-    assert parakeet_model.device == "cpu"
+    assert parakeet_model.device is None
+    assert parakeet_model.gguf_loads == 1
 
 
-def test_parakeet_falls_back_to_cpu_when_cuda_is_unavailable(monkeypatch):
+def test_parakeet_falls_back_to_transcribe_cpp_when_cuda_is_unavailable(monkeypatch):
     torch_module = _RecordingTorch(available=False)
     runtime = _install_parakeet_runtime(monkeypatch, torch_module, driver_loaded=True)
 
     engine = model_module.load_engine(DictationConfig(backend="parakeet"))
 
-    assert runtime.device == engine._device == "cpu"
+    assert runtime.device is None
+    assert runtime.gguf_loads == 1
+    assert engine._device == "cpu"
     assert torch_module.cuda.calls == 1
 
 

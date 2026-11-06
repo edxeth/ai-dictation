@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "AI Dictation" }]
 dependencies = [
   "kestrel==0.9.1",
+  "transcribe-cpp==0.4.1",
   "huggingface-hub>=0.20",
   "torch>=2.4",
   "faster-whisper",
@@ -63,4 +64,4 @@ optional_dependencies_dev_groups = ["test"]
 
 [tool.deptry.per_rule_ignores]
 # These runtimes are loaded with importlib only when the selected backend needs them.
-DEP002 = ["kestrel", "faster-whisper", "pyperclip", "torch"]
+DEP002 = ["kestrel", "faster-whisper", "pyperclip", "torch", "transcribe-cpp"]
