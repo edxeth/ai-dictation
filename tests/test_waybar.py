@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -309,18 +310,30 @@ def test_waybar_switch_names_the_new_local_models(tmp_path, after, label):
     assert f"Model switched to {label}" in (tmp_path / "notify-send.args").read_text()
 
 
-def _menu_commands(tmp_path: Path, *, choice: str, cli_status: int = 0) -> Path:
+# System tools the menu script and its stubs call. The test PATH holds only
+# these and the stubs, so a menu tool installed on the host is never found.
+MENU_SYSTEM_TOOLS = ("cat", "date", "head", "mkdir", "sed")
+
+
+def _menu_commands(
+    tmp_path: Path, *, choice: str, cli_status: int = 0, pickers: tuple[str, ...]
+) -> Path:
     commands = tmp_path / "bin"
     commands.mkdir()
-    walker = commands / "walker"
-    walker.write_text(
-        "#!/bin/bash\n"
-        'printf "%s\\n" "$@" > "$STUB_LOG/walker.args"\n'
-        'cat > "$STUB_LOG/walker.stdin"\n'
-        '[ -n "$STUB_CHOICE" ] || exit 130\n'
-        'printf "%s\\n" "$STUB_CHOICE"\n',
-        encoding="utf-8",
-    )
+    for tool in MENU_SYSTEM_TOOLS:
+        (commands / tool).symlink_to(shutil.which(tool))
+    # Each picker stub records which picker ran, its arguments and its stdin,
+    # then exits 1 without output when dismissed, as dmenu-style pickers do.
+    for picker in pickers:
+        (commands / picker).write_text(
+            "#!/bin/bash\n"
+            f'printf "%s\\n" {picker} > "$STUB_LOG/menu.name"\n'
+            'printf "%s\\n" "$@" > "$STUB_LOG/menu.args"\n'
+            'cat > "$STUB_LOG/menu.stdin"\n'
+            '[ -n "$STUB_CHOICE" ] || exit 1\n'
+            'printf "%s\\n" "$STUB_CHOICE"\n',
+            encoding="utf-8",
+        )
     cli = commands / "dictation-cli"
     cli.write_text(
         "#!/bin/bash\n"
@@ -335,12 +348,28 @@ def _menu_commands(tmp_path: Path, *, choice: str, cli_status: int = 0) -> Path:
             encoding="utf-8",
         )
     for command in commands.iterdir():
-        command.chmod(0o755)
+        if not command.is_symlink():
+            command.chmod(0o755)
     return commands
 
 
-def _run_menu(tmp_path: Path, *, saved: str | None, choice: str, cli_status: int = 0):
-    commands = _menu_commands(tmp_path, choice=choice, cli_status=cli_status)
+def _run_menu(
+    tmp_path: Path,
+    *,
+    saved: str | None,
+    choice: str,
+    cli_status: int = 0,
+    pickers: tuple[str, ...] = ("vicinae",),
+    env: dict[str, str] | None = None,
+):
+    commands = _menu_commands(
+        tmp_path, choice=choice, cli_status=cli_status, pickers=pickers
+    )
+    base_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("LOCAL_AI_DICTATION_MENU_CMD", "LOCAL_AI_DICTATION_WALKER_THEME")
+    }
     state_home = tmp_path / "state"
     if saved is not None:
         backend_file = state_home / "local-ai-dictation/backend.json"
@@ -349,12 +378,13 @@ def _run_menu(tmp_path: Path, *, saved: str | None, choice: str, cli_status: int
     return subprocess.run(
         ["/bin/bash", str(MENU_SCRIPT)],
         env={
-            **os.environ,
-            "PATH": f"{commands}:/bin:/usr/bin",
+            **base_env,
+            "PATH": str(commands),
             "XDG_STATE_HOME": str(state_home),
             "STUB_LOG": str(tmp_path),
             "STUB_CHOICE": choice,
             "LOCAL_AI_DICTATION_CLI": str(commands / "dictation-cli"),
+            **(env or {}),
         },
         capture_output=True,
         text=True,
@@ -367,13 +397,18 @@ def _calls(tmp_path: Path, name: str) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 
+def _menu_call(tmp_path: Path) -> tuple[str, list[str]]:
+    name = (tmp_path / "menu.name").read_text(encoding="utf-8").strip()
+    return name, (tmp_path / "menu.args").read_text(encoding="utf-8").splitlines()
+
+
 def test_model_menu_lists_every_backend_and_switches_straight_to_the_pick(tmp_path):
     result = _run_menu(
         tmp_path, saved="willow", choice="󰍬 Bark 3.0 Pro · English · most accurate"
     )
 
     assert result.returncode == 0, result.stderr
-    menu = (tmp_path / "walker.stdin").read_text(encoding="utf-8").splitlines()
+    menu = (tmp_path / "menu.stdin").read_text(encoding="utf-8").splitlines()
     assert [line.split(" · ")[0][2:] for line in menu] == list(BACKEND_LABELS.values())
     assert menu[-1] == "● Willow · current"
     # Hints name only what matters for choosing on a GPU; no download sizes.
@@ -384,7 +419,6 @@ def test_model_menu_lists_every_backend_and_switches_straight_to_the_pick(tmp_pa
         "󰍬 Bark 3.0 · English · less accurate",
         "󰍬 Bark 3.0 Pro · English · most accurate",
     ]
-    assert "-d" in (tmp_path / "walker.args").read_text().splitlines()
     # One direct switch: a single restart that loads only the chosen model.
     assert _calls(tmp_path, "cli") == ["backend set bark-pro --restart-bridge"]
     assert "Model switched to Bark 3.0 Pro" in _calls(tmp_path, "notify-send")[-1]
@@ -395,7 +429,7 @@ def test_model_menu_lists_every_backend_and_switches_straight_to_the_pick(tmp_pa
     ("saved", "choice"),
     [
         ("bark", "● Bark 3.0 · current"),  # the running choice needs no reload
-        ("bark", ""),  # Walker dismissed with Escape
+        ("bark", ""),  # menu dismissed with Escape
         ("bark", "something typed into the search box"),
     ],
 )
@@ -410,7 +444,7 @@ def test_model_menu_does_nothing_without_a_new_choice(tmp_path, saved, choice):
 def test_model_menu_marks_whisper_current_when_nothing_was_saved(tmp_path):
     _run_menu(tmp_path, saved=None, choice="")
 
-    menu = (tmp_path / "walker.stdin").read_text(encoding="utf-8").splitlines()
+    menu = (tmp_path / "menu.stdin").read_text(encoding="utf-8").splitlines()
     assert menu[0] == "● Whisper · current"
     assert sum(line.startswith("● ") for line in menu) == 1
 
@@ -427,3 +461,99 @@ def test_model_menu_reports_a_failed_switch(tmp_path):
     assert _calls(tmp_path, "cli") == ["backend set parakeet-redux --restart-bridge"]
     assert "Could not switch to Parakeet Redux" in _calls(tmp_path, "notify-send")[-1]
     assert _calls(tmp_path, "pkill") == ["-RTMIN+8 waybar"]
+
+
+# Each picker's dmenu-mode flags, from its documentation. Walker's flags are the
+# ones the 1.3.0 menu used.
+@pytest.mark.parametrize(
+    ("picker", "args"),
+    [
+        ("vicinae", ["dmenu", "-p", "Dictation model"]),
+        ("walker", ["-d", "-e", "-p", "Dictation model"]),
+        ("fuzzel", ["--dmenu", "--prompt", "Dictation model: "]),
+        ("rofi", ["-dmenu", "-p", "Dictation model"]),
+        ("wofi", ["--dmenu", "-p", "Dictation model"]),
+    ],
+)
+def test_model_menu_opens_the_installed_picker(tmp_path, picker, args):
+    result = _run_menu(
+        tmp_path, saved="whisper", choice="󰍬 Willow · Cloud", pickers=(picker,)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _menu_call(tmp_path) == (picker, args)
+    assert _calls(tmp_path, "cli") == ["backend set willow --restart-bridge"]
+
+
+def test_model_menu_prefers_vicinae_over_other_installed_pickers(tmp_path):
+    _run_menu(
+        tmp_path, saved="whisper", choice="", pickers=("wofi", "walker", "vicinae")
+    )
+
+    assert _menu_call(tmp_path)[0] == "vicinae"
+
+
+def test_model_menu_keeps_the_walker_theme_setting(tmp_path):
+    _run_menu(
+        tmp_path,
+        saved="whisper",
+        choice="",
+        pickers=("walker",),
+        env={"LOCAL_AI_DICTATION_WALKER_THEME": "pi"},
+    )
+
+    assert _menu_call(tmp_path) == (
+        "walker",
+        ["-d", "-e", "-p", "Dictation model", "-t", "pi"],
+    )
+
+
+# A blank setting counts as unset, as with other shell variables: the script
+# picks an installed picker instead of failing.
+@pytest.mark.parametrize("command", ["", "   "])
+def test_model_menu_treats_a_blank_command_as_unset(tmp_path, command):
+    result = _run_menu(
+        tmp_path,
+        saved="whisper",
+        choice="",
+        pickers=("vicinae",),
+        env={"LOCAL_AI_DICTATION_MENU_CMD": command},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _menu_call(tmp_path)[0] == "vicinae"
+    assert _calls(tmp_path, "notify-send") == []
+
+
+def test_model_menu_runs_the_configured_command_as_given(tmp_path):
+    result = _run_menu(
+        tmp_path,
+        saved="whisper",
+        choice="󰍬 Bark 3.0 · English · less accurate",
+        pickers=("vicinae", "mypicker"),
+        env={"LOCAL_AI_DICTATION_MENU_CMD": "mypicker --dmenu --lines 6"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _menu_call(tmp_path) == ("mypicker", ["--dmenu", "--lines", "6"])
+    assert _calls(tmp_path, "cli") == ["backend set bark --restart-bridge"]
+
+
+@pytest.mark.parametrize(
+    ("pickers", "env", "message"),
+    [
+        ((), {}, "No menu tool found"),
+        (
+            ("vicinae",),
+            {"LOCAL_AI_DICTATION_MENU_CMD": "missing-picker --dmenu"},
+            "missing-picker",
+        ),
+    ],
+)
+def test_model_menu_reports_a_missing_picker(tmp_path, pickers, env, message):
+    result = _run_menu(tmp_path, saved="whisper", choice="", pickers=pickers, env=env)
+
+    assert result.returncode == 1
+    assert message in _calls(tmp_path, "notify-send")[-1]
+    assert _calls(tmp_path, "cli") == []
+    assert _calls(tmp_path, "pkill") == []

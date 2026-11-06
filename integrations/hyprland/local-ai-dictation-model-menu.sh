@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pick the dictation model from a Walker menu and switch to it in one step.
+# Pick the dictation model from a dmenu-style menu and switch to it in one step.
 # Cycling with backend toggle restarts the bridge, and loads a model, for every
 # model passed on the way; this restarts once and loads only the chosen model.
 set -euo pipefail
@@ -45,12 +45,37 @@ for i in "${!keys[@]}"; do
   fi
 done
 
-walker_args=(-d -e -p "Dictation model")
-if [ -n "${LOCAL_AI_DICTATION_WALKER_THEME:-}" ]; then
-  walker_args+=(-t "$LOCAL_AI_DICTATION_WALKER_THEME")
+# The menu command reads one row per line on stdin and prints the chosen row.
+# LOCAL_AI_DICTATION_MENU_CMD runs as given (split on whitespace); when it is
+# unset or blank, the first installed picker below opens with its own
+# dmenu-mode flags.
+menu=()
+read -r -a menu <<< "${LOCAL_AI_DICTATION_MENU_CMD:-}"
+if [ "${#menu[@]}" -gt 0 ]; then
+  if ! command -v "${menu[0]}" >/dev/null 2>&1; then
+    notify "Menu command not found: ${menu[0]} (LOCAL_AI_DICTATION_MENU_CMD)"
+    exit 1
+  fi
+elif command -v vicinae >/dev/null 2>&1; then
+  menu=(vicinae dmenu -p "Dictation model")
+elif command -v walker >/dev/null 2>&1; then
+  menu=(walker -d -e -p "Dictation model")
+  if [ -n "${LOCAL_AI_DICTATION_WALKER_THEME:-}" ]; then
+    menu+=(-t "$LOCAL_AI_DICTATION_WALKER_THEME")
+  fi
+elif command -v fuzzel >/dev/null 2>&1; then
+  menu=(fuzzel --dmenu --prompt "Dictation model: ")
+elif command -v rofi >/dev/null 2>&1; then
+  menu=(rofi -dmenu -p "Dictation model")
+elif command -v wofi >/dev/null 2>&1; then
+  menu=(wofi --dmenu -p "Dictation model")
+else
+  notify "No menu tool found. Install vicinae, walker, fuzzel, rofi or wofi, or set LOCAL_AI_DICTATION_MENU_CMD."
+  exit 1
 fi
-# Walker exits non-zero when the menu is dismissed; that is not an error.
-choice="$(printf '%s\n' "${lines[@]}" | walker "${walker_args[@]}" 2>/dev/null || true)"
+
+# Pickers exit non-zero when the menu is dismissed; that is not an error.
+choice="$(printf '%s\n' "${lines[@]}" | "${menu[@]}" 2>/dev/null || true)"
 
 target=""
 label=""

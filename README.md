@@ -311,7 +311,7 @@ Switching backend restarts the bridge so local model VRAM is released. The GUI
 subscribes to `/events` using Server-Sent Events rather than polling bridge
 state.
 
-Install the desktop entry for Walker, Elephant, or another XDG launcher:
+Install the desktop entry for any XDG application launcher:
 
 ```bash
 install -Dm644 integrations/applications/local-ai-dictation.desktop \
@@ -394,11 +394,16 @@ dunst, and wl-clipboard or xclip).
 }
 ```
 
-The model menu uses [Walker](https://github.com/abenz1267/walker) in dmenu
-mode (Walker reads the menu lines and returns the selected line). To use a
-Walker theme, set `LOCAL_AI_DICTATION_WALKER_THEME` to the theme name. If this
-variable is not set, Walker uses the theme from its configuration. To use the
-older cycle, which moves to the next backend on each click, set
+The model menu needs a dmenu-style picker: a program that reads the menu lines
+on stdin and prints the selected line. The script uses the first one it finds
+of `vicinae`, `walker`, `fuzzel`, `rofi`, and `wofi`, with that picker's
+own theme. To use another picker, or other flags, set
+`LOCAL_AI_DICTATION_MENU_CMD` to the full command, for example
+`LOCAL_AI_DICTATION_MENU_CMD="fuzzel --dmenu --lines 6"`. The script splits it
+on whitespace and runs it as given. When the script picks Walker,
+`LOCAL_AI_DICTATION_WALKER_THEME` still sets the Walker theme. If no picker is
+found, the script shows a notification and does nothing. To use the older
+cycle, which moves to the next backend on each click, set
 `on-click-right` to `~/.config/hypr/scripts/local-ai-dictation-switch-model.sh`.
 
 Add `custom/local_ai_dictation` to a Waybar module list. Example styling:
@@ -430,7 +435,7 @@ Add `custom/local_ai_dictation` to a Waybar module list. Example styling:
 Behavior:
 
 - Left click or `Super+R`: start/stop recording.
-- Right click: Walker shows a menu of all backends and marks the current
+- Right click: the picker shows a menu of all backends and marks the current
   backend. If you select a different backend, the app saves it and restarts
   the bridge one time. Only the selected model loads. If you press Escape or
   select the current backend, nothing changes.

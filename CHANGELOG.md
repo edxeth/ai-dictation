@@ -4,6 +4,11 @@ All notable changes to AI Dictation are recorded here. Versions follow [Semantic
 
 ## [Unreleased]
 
+### Changed
+
+#### The Waybar model menu works with any dmenu-style picker
+The right-click model menu no longer requires Walker. It opens the first picker it finds of `vicinae`, `walker`, `fuzzel`, `rofi`, and `wofi`. Set `LOCAL_AI_DICTATION_MENU_CMD` to run any other picker command instead. `LOCAL_AI_DICTATION_WALKER_THEME` still applies when the menu opens Walker. When no picker is found, the menu shows a notification instead of doing nothing. Copy the updated `integrations/hyprland/local-ai-dictation-model-menu.sh` to apply the change.
+
 ### Fixed
 
 #### Auto-paste works when Hyprland uses a Lua config
